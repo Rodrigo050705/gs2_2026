@@ -1,8 +1,8 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Date, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -152,8 +152,25 @@ class TelemetriaInput(BaseModel):
     timestamp: datetime
 
 
+def marcar_como_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """O SQLite guarda datas sem fuso; todas são gravadas em UTC. Marca o fuso para o JSON sair com +00:00
+    e o navegador converter para o horário local corretamente."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def utc_para_local(dt: Optional[datetime]) -> Optional[str]:
+    """Converte uma data UTC do banco para o horário local do servidor (texto legível)."""
+    if dt is None:
+        return None
+    return marcar_como_utc(dt).astimezone().strftime("%d/%m/%Y %H:%M")
+
+
 class TelemetriaResponse(TelemetriaInput):
     id: int
+
+    validar_timestamp_utc = field_validator("timestamp")(marcar_como_utc)
 
     class Config:
         from_attributes = True
@@ -166,6 +183,8 @@ class AlertaResponse(BaseModel):
     mensagem: str
     lido: bool
     criado_em: datetime
+
+    validar_criado_em_utc = field_validator("criado_em")(marcar_como_utc)
 
     class Config:
         from_attributes = True
@@ -424,3 +443,154 @@ def obter_indicadores_comerciais(produtor_id: int = 1, db: Session = Depends(get
         "risco_validade": risco_validade,
         "produtos": itens,
     }
+
+# ==========================================
+# 6. ASSISTENTE IA (CHAT)
+# ==========================================
+# A chave fica em back/.env (veja back/.env.example), carregada automaticamente abaixo.
+#   Chave grátis em: https://aistudio.google.com/apikey
+import os
+import json
+from pathlib import Path
+from typing import Literal
+from dotenv import load_dotenv
+from pydantic import Field
+from google import genai
+from google.genai import types
+from google.genai import errors as genai_errors
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# flash-lite: respostas em ~2-4s; os "flash" maiores estavam sobrecarregados (timeouts de 25s+)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+# Se o principal falhar (sobrecarga, limite, timeout), tenta estes em ordem
+GEMINI_MODELOS_RESERVA = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+_gemini_client = None
+
+
+def get_gemini_client():
+    """Cria o cliente uma única vez (lê GEMINI_API_KEY do ambiente)."""
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(
+            http_options=types.HttpOptions(
+                timeout=20_000,  # ms: se um modelo travar, desiste e passa para o próximo
+                retry_options=types.HttpRetryOptions(attempts=1),  # sem retry interno; a troca de modelo cuida disso
+            )
+        )
+    return _gemini_client
+
+
+class MensagemChat(BaseModel):
+    papel: Literal["user", "model"]
+    texto: str = Field(max_length=4000)
+
+
+class ChatInput(BaseModel):
+    produtor_id: int = 1
+    mensagem: str = Field(min_length=1, max_length=2000)
+    historico: List[MensagemChat] = []
+
+
+# "Parametrização do sistema": regras de comportamento da IA
+SYSTEM_PROMPT = """Você é o AgroSmart Assistente, consultor de um pequeno produtor rural brasileiro.
+Regras:
+- Responda em português do Brasil, de forma curta, prática e direta (no máximo ~8 linhas, use listas quando ajudar).
+- Baseie-se PRIMEIRO nos DADOS ATUAIS abaixo (estoque, margens, validade, clima e alertas). Cite números concretos.
+- "Melhor produto" = considere margem %, valor em estoque, preço de venda vs. preço de mercado e risco de validade. Explique o critério.
+- Perguntas sobre "melhor momento para produzir/plantar X": combine os dados de clima dos sensores com conhecimento agronômico geral
+  (sazonalidade no Brasil, temperatura ideal, ciclo da cultura). Deixe claro o que vem dos dados e o que é recomendação geral.
+- Se faltar dado para responder (ex.: não há histórico de vendas), diga isso e responda com o que existe.
+- Nunca invente números que não estejam nos dados.
+- Assuntos fora de agro/gestão do negócio: recuse educadamente."""
+
+
+def montar_contexto(db: Session, produtor_id: int) -> str:
+    """Coleta os dados do produtor e transforma em JSON para a IA."""
+    produtos = [
+        enriquecer_produto(p)
+        for p in db.query(ProdutoDB).filter(ProdutoDB.produtor_id == produtor_id).all()
+    ]
+
+    leituras = (
+        db.query(TelemetriaDB)
+        .filter(TelemetriaDB.produtor_id == produtor_id)
+        .order_by(TelemetriaDB.timestamp.desc())
+        .limit(50)
+        .all()
+    )
+    clima = None
+    if leituras:
+        n = len(leituras)
+        clima = {
+            "leituras_consideradas": n,
+            "ultima_leitura": {
+                "temperatura_ar": leituras[0].temperatura_ar,
+                "umidade_ar": leituras[0].umidade_ar,
+                "umidade_solo": leituras[0].umidade_solo,
+                "horario_local": utc_para_local(leituras[0].timestamp),
+            },
+            "media_temperatura_ar": round(sum(l.temperatura_ar for l in leituras) / n, 1),
+            "media_umidade_ar": round(sum(l.umidade_ar for l in leituras) / n, 1),
+            "media_umidade_solo": round(sum(l.umidade_solo for l in leituras) / n, 1),
+        }
+
+    alertas = (
+        db.query(AlertaDB)
+        .filter(AlertaDB.produtor_id == produtor_id)
+        .order_by(AlertaDB.criado_em.desc())
+        .limit(10)
+        .all()
+    )
+
+    contexto = {
+        "agora_horario_local": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "estoque_produtos": produtos,
+        "clima_sensores": clima or "sem leituras de sensores ainda",
+        "alertas_recentes": [
+            {"tipo": a.tipo, "severidade": a.severidade, "mensagem": a.mensagem, "horario_local": utc_para_local(a.criado_em)}
+            for a in alertas
+        ],
+    }
+    return json.dumps(contexto, default=str, ensure_ascii=False)
+
+
+@app.post("/api/v1/chat")
+def conversar_com_assistente(payload: ChatInput, db: Session = Depends(get_db)):
+    contexto = montar_contexto(db, payload.produtor_id)
+
+    # Histórico curto (últimas 10 mensagens) + pergunta atual
+    contents = [
+        types.Content(role=m.papel, parts=[types.Part(text=m.texto)])
+        for m in payload.historico[-10:]
+    ]
+    contents.append(types.Content(role="user", parts=[types.Part(text=payload.mensagem)]))
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}",
+        temperature=0.3,
+    )
+
+    ultimo_erro = None
+    for modelo in [GEMINI_MODEL] + [m for m in GEMINI_MODELOS_RESERVA if m != GEMINI_MODEL]:
+        try:
+            resposta = get_gemini_client().models.generate_content(
+                model=modelo, contents=contents, config=config
+            )
+            return {"resposta": resposta.text or "Não consegui gerar uma resposta agora."}
+        except genai_errors.APIError as e:
+            ultimo_erro = e
+            if e.code in (400, 401, 403):  # requisição/chave inválida: trocar de modelo não resolve
+                break
+        except Exception as e:  # timeout de rede etc. → próximo modelo
+            ultimo_erro = e
+
+    print(f"[chat] todos os modelos falharam. Último erro: {ultimo_erro}")
+    codigo = getattr(ultimo_erro, "code", None)
+    if codigo in (401, 403) or (codigo == 400 and "API key" in str(ultimo_erro)):
+        msg = "A chave da IA é inválida ou expirou. Verifique o GEMINI_API_KEY em back/.env."
+    elif codigo == 400:
+        msg = "A IA não conseguiu processar essa pergunta. Tente reformular."
+    else:
+        msg = "A IA está sobrecarregada no momento. Tente novamente em alguns segundos."
+    raise HTTPException(status_code=503, detail=msg)

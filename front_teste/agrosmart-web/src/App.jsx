@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import ClimaDashboard from "./components/ClimaDashboard";
 import ComercialDashboard from "./components/ComercialDashboard";
 import EstoqueGestao from "./components/EstoqueGestao";
+import ChatWidget from "./components/ChatWidget";
 
 function App() {
   const [abaAtiva, setAbaAtiva] = useState("estoque");
@@ -47,6 +48,8 @@ function App() {
       {abaAtiva === "clima" && <ClimaDashboard />}
       {abaAtiva === "comercial" && <ComercialDashboard />}
       {abaAtiva === "estoque" && <EstoqueGestao />}
+
+      <ChatWidget />
     </div>
   );
 }

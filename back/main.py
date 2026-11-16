@@ -134,6 +134,17 @@ class PlantioDB(Base):
     criado_em = Column(DateTime, default=datetime.utcnow)
 
 
+class ResumoDiaDB(Base):
+    """Último resumo do dia gerado pela IA (cache, para não chamar o Gemini a cada abertura)."""
+    __tablename__ = "resumos_dia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    produtor_id = Column(Integer, index=True)
+    texto = Column(String)
+    modelo = Column(String)
+    gerado_em = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -1461,6 +1472,42 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
     return json.dumps(contexto, default=str, ensure_ascii=False)
 
 
+class IAIndisponivel(Exception):
+    """Todos os modelos falharam. `mensagem` é o texto amigável para o usuário."""
+
+    def __init__(self, mensagem: str, erro: Exception = None):
+        super().__init__(mensagem)
+        self.mensagem = mensagem
+        self.erro = erro
+
+
+def gerar_com_ia(contents, system_instruction: str, temperatura: float = 0.3):
+    """Chama o Gemini tentando o modelo principal e depois os de reserva.
+    Devolve (texto, modelo usado) ou levanta IAIndisponivel."""
+    config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=temperatura)
+    ultimo_erro = None
+    for modelo in [GEMINI_MODEL] + [m for m in GEMINI_MODELOS_RESERVA if m != GEMINI_MODEL]:
+        try:
+            resposta = get_gemini_client().models.generate_content(model=modelo, contents=contents, config=config)
+            return resposta.text, modelo
+        except genai_errors.APIError as e:
+            ultimo_erro = e
+            if e.code in (400, 401, 403):  # requisição/chave inválida: trocar de modelo não resolve
+                break
+        except Exception as e:  # timeout de rede etc. → próximo modelo
+            ultimo_erro = e
+
+    print(f"[ia] todos os modelos falharam. Último erro: {ultimo_erro}")
+    codigo = getattr(ultimo_erro, "code", None)
+    if codigo in (401, 403) or (codigo == 400 and "API key" in str(ultimo_erro)):
+        msg = "A chave da IA é inválida ou expirou. Verifique o GEMINI_API_KEY."
+    elif codigo == 400:
+        msg = "A IA não conseguiu processar essa pergunta. Tente reformular."
+    else:
+        msg = "A IA está sobrecarregada no momento. Tente novamente em alguns segundos."
+    raise IAIndisponivel(msg, ultimo_erro)
+
+
 @app.post("/api/v1/chat")
 def conversar_com_assistente(payload: ChatInput, db: Session = Depends(get_db)):
     contexto = montar_contexto(db, payload.produtor_id)
@@ -1472,31 +1519,104 @@ def conversar_com_assistente(payload: ChatInput, db: Session = Depends(get_db)):
     ]
     contents.append(types.Content(role="user", parts=[types.Part(text=payload.mensagem)]))
 
-    config = types.GenerateContentConfig(
-        system_instruction=f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}",
-        temperature=0.3,
-    )
+    try:
+        texto, _modelo = gerar_com_ia(contents, f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}")
+    except IAIndisponivel as e:
+        raise HTTPException(status_code=503, detail=e.mensagem)
+    return {"resposta": texto or "Não consegui gerar uma resposta agora."}
 
-    ultimo_erro = None
-    for modelo in [GEMINI_MODEL] + [m for m in GEMINI_MODELOS_RESERVA if m != GEMINI_MODEL]:
+
+# ==========================================
+# 7. RESUMO DO DIA
+# ==========================================
+RESUMO_VALIDADE = timedelta(hours=3)  # depois disso (ou ao virar o dia) a IA gera um novo
+
+INSTRUCOES_RESUMO = """TAREFA AGORA: gerar o RESUMO DO DIA que aparece no topo do sistema quando o produtor abre o painel.
+- No máximo 5 tópicos curtos em Markdown (lista com "-"), do mais urgente para o menos urgente.
+- Cada tópico começa com um rótulo em negrito: **Estoque:**, **Alertas:**, **Clima:**, **Colheita:**, **Vendas:**.
+- Cubra, quando houver: itens do estoque vencendo, alertas pendentes, chuva/irrigação dos próximos dias (com dia da
+  semana), colheitas próximas e um destaque de vendas (tendência ou melhor produto).
+- O último tópico é **Ação do dia:** com UMA recomendação prática e concreta.
+- Sem saudação, sem título e sem conclusão. Use só números que estão nos dados."""
+
+
+def formatar_brl(valor: float) -> str:
+    """1234.5 -> 'R$ 1.234,50'"""
+    return "R$ " + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def resumo_por_regras(db: Session, produtor_id: int) -> str:
+    """Resumo sem IA (quando o Gemini está indisponível): os mesmos tópicos, montados pelas regras."""
+    topicos = []
+
+    vencendo = [enriquecer_produto(p) for p in db.query(ProdutoDB).filter(ProdutoDB.produtor_id == produtor_id).all()]
+    vencendo = sorted((p for p in vencendo if p["status_validade"] == "CRITICO"), key=lambda p: p["dias_para_vencer"])
+    if vencendo:
+        itens = ", ".join(f"{p['nome']} ({p['quantidade']:g} {p['unidade']}, {p['dias_para_vencer']} dias)" for p in vencendo)
+        topicos.append(f"- **Estoque:** vencendo em até 3 dias: {itens}.")
+
+    pendentes = db.query(AlertaDB).filter(AlertaDB.produtor_id == produtor_id, AlertaDB.lido.is_(False)).count()
+    if pendentes:
+        topicos.append(f"- **Alertas:** {pendentes} alerta(s) crítico(s) pendente(s) na aba Clima & IoT.")
+
+    produtor = db.query(ProdutorDB).filter(ProdutorDB.id == produtor_id).first()
+    if produtor:
         try:
-            resposta = get_gemini_client().models.generate_content(
-                model=modelo, contents=contents, config=config
-            )
-            return {"resposta": resposta.text or "Não consegui gerar uma resposta agora."}
-        except genai_errors.APIError as e:
-            ultimo_erro = e
-            if e.code in (400, 401, 403):  # requisição/chave inválida: trocar de modelo não resolve
-                break
-        except Exception as e:  # timeout de rede etc. → próximo modelo
-            ultimo_erro = e
+            previsao = obter_previsao_tempo(produtor)
+            chuvosos = [d["dia_semana"] for d in previsao["dias"] if (d["prob_chuva_percentual"] or 0) >= 60]
+            texto = f"{previsao['chuva_total_mm']} mm de chuva previstos em 7 dias"
+            texto += f" (chuva provável: {', '.join(chuvosos)})." if chuvosos else "."
+            topicos.append(f"- **Clima:** {texto}")
+        except Exception:
+            pass
 
-    print(f"[chat] todos os modelos falharam. Último erro: {ultimo_erro}")
-    codigo = getattr(ultimo_erro, "code", None)
-    if codigo in (401, 403) or (codigo == 400 and "API key" in str(ultimo_erro)):
-        msg = "A chave da IA é inválida ou expirou. Verifique o GEMINI_API_KEY em back/.env."
-    elif codigo == 400:
-        msg = "A IA não conseguiu processar essa pergunta. Tente reformular."
-    else:
-        msg = "A IA está sobrecarregada no momento. Tente novamente em alguns segundos."
-    raise HTTPException(status_code=503, detail=msg)
+    hoje = date.today()
+    proximas = [
+        enriquecer_plantio(p)
+        for p in db.query(PlantioDB).filter(PlantioDB.produtor_id == produtor_id, PlantioDB.status == "Em andamento").all()
+    ]
+    proximas = [p for p in proximas if p["inicio_colheita_previsto"] <= hoje + timedelta(days=7) and p["fim_colheita_previsto"] >= hoje]
+    if proximas:
+        itens = ", ".join(f"{p['cultura']} ({p['talhao']}, a partir de {p['inicio_colheita_previsto']:%d/%m})" for p in proximas)
+        topicos.append(f"- **Colheita:** nos próximos 7 dias: {itens}.")
+
+    vendas = resumir_vendas(db, produtor_id, 30)["produtos"]
+    if vendas:
+        melhor = vendas[0]
+        topicos.append(f"- **Vendas:** maior lucro em 30 dias: {melhor['produto']} ({formatar_brl(melhor['lucro'])}).")
+
+    if vencendo:
+        topicos.append(f"- **Ação do dia:** priorizar a venda de {vencendo[0]['nome']}, que vence primeiro.")
+    return "\n".join(topicos) or "- Nada urgente hoje."
+
+
+@app.get("/api/v1/resumo-dia")
+def resumo_do_dia(produtor_id: int = 1, atualizar: bool = False, db: Session = Depends(get_db)):
+    """Resumo do dia gerado pela IA (com cache de 3 h no banco). Se a IA falhar, devolve um resumo por regras."""
+    agora = datetime.utcnow()
+    ultimo = (
+        db.query(ResumoDiaDB)
+        .filter(ResumoDiaDB.produtor_id == produtor_id)
+        .order_by(ResumoDiaDB.gerado_em.desc())
+        .first()
+    )
+    mesmo_dia = ultimo and utc_para_local(ultimo.gerado_em)[:10] == datetime.now().strftime("%d/%m/%Y")
+    if ultimo and not atualizar and mesmo_dia and agora - ultimo.gerado_em < RESUMO_VALIDADE:
+        return {"texto": ultimo.texto, "fonte": "ia", "modelo": ultimo.modelo,
+                "gerado_em": marcar_como_utc(ultimo.gerado_em), "em_cache": True}
+
+    contexto = montar_contexto(db, produtor_id)
+    contents = [types.Content(role="user", parts=[types.Part(text="Gere o resumo do dia.")])]
+    try:
+        texto, modelo = gerar_com_ia(
+            contents, f"{SYSTEM_PROMPT}\n\n{INSTRUCOES_RESUMO}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}"
+        )
+    except IAIndisponivel as e:
+        # Não guarda: na próxima abertura tenta a IA de novo.
+        return {"texto": resumo_por_regras(db, produtor_id), "fonte": "regras", "modelo": None,
+                "gerado_em": marcar_como_utc(agora), "em_cache": False, "aviso": e.mensagem}
+
+    resumo = ResumoDiaDB(produtor_id=produtor_id, texto=texto or resumo_por_regras(db, produtor_id), modelo=modelo, gerado_em=agora)
+    db.add(resumo)
+    db.commit()
+    return {"texto": resumo.texto, "fonte": "ia", "modelo": modelo, "gerado_em": marcar_como_utc(agora), "em_cache": False}

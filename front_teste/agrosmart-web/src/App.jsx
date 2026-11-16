@@ -6,6 +6,7 @@ import EstoqueGestao from "./components/EstoqueGestao";
 import VendasDashboard from "./components/VendasDashboard";
 import PlantiosGestao from "./components/PlantiosGestao";
 import ChatWidget from "./components/ChatWidget";
+import ResumoDia from "./components/ResumoDia";
 
 const ABAS = [
   { id: "clima", label: "Clima & IoT", Tela: ClimaDashboard },
@@ -54,6 +55,8 @@ function App() {
           </button>
         </div>
       </nav>
+
+      <ResumoDia />
 
       <TelaAtiva key={`${abaAtiva}-${versao}`} />
 

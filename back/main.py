@@ -1,8 +1,8 @@
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Date, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -53,6 +53,22 @@ class ProdutoDB(Base):
     preco_mercado = Column(Float)    # Referência regional (ex: CEASA)
     data_validade = Column(Date)
     atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class VendaDB(Base):
+    __tablename__ = "vendas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    produtor_id = Column(Integer, default=1, index=True)
+    produto_id = Column(Integer, index=True)      # referência a produtos.id
+    produto_nome = Column(String, index=True)     # cópia do nome no momento da venda
+    quantidade = Column(Float)
+    unidade = Column(String)
+    preco_unitario = Column(Float)                # preço efetivamente praticado
+    custo_unitario = Column(Float)                # custo no momento da venda (para lucro)
+    canal = Column(String)                        # Ex: "Feira", "Mercado local", "CEASA", "Delivery"
+    data_venda = Column(Date, index=True)
+    criado_em = Column(DateTime, default=datetime.utcnow)
 
 
 Base.metadata.create_all(bind=engine)
@@ -137,7 +153,59 @@ def inicializar_dados_demo():
         db.close()
 
 
+# Vendas diárias médias e sazonalidade por mês (1=jan … 12=dez) para gerar um histórico realista
+PERFIL_VENDAS_DEMO = {
+    "Tomate Carmem":  {"base": 18, "sazonal": {11: 1.25, 12: 1.35, 1: 1.3, 6: 0.8, 7: 0.8}},
+    "Alface Crespa":  {"base": 22, "sazonal": {12: 1.4, 1: 1.45, 2: 1.3, 11: 1.2, 6: 0.7, 7: 0.65}},
+    "Morango Albion": {"base": 5,  "sazonal": {6: 1.5, 7: 1.7, 8: 1.8, 9: 1.6, 10: 1.2, 11: 0.8, 12: 0.5, 1: 0.4}},
+    "Cenoura Nantes": {"base": 12, "sazonal": {}},
+    "Feijão Carioca": {"base": 8,  "sazonal": {3: 1.2, 4: 1.2}},
+}
+CANAIS_DEMO = ["Feira", "Feira", "Mercado local", "Mercado local", "CEASA", "Delivery"]
+
+
+def inicializar_vendas_demo(dias: int = 180):
+    """Gera ~6 meses de vendas fictícias (determinísticas) para a demo, se a tabela estiver vazia."""
+    import random
+
+    db = SessionLocal()
+    try:
+        if db.query(VendaDB).count() > 0:
+            return
+        rnd = random.Random(42)
+        produtos = {p.nome: p for p in db.query(ProdutoDB).filter(ProdutoDB.produtor_id == 1).all()}
+        hoje = date.today()
+        vendas = []
+        for d in range(dias, 0, -1):
+            dia = hoje - timedelta(days=d)
+            # Quarta e sábado são dias de feira: vende mais
+            fator_dia = 1.6 if dia.weekday() in (2, 5) else (0.4 if dia.weekday() == 6 else 1.0)
+            for nome, perfil in PERFIL_VENDAS_DEMO.items():
+                p = produtos.get(nome)
+                if not p or rnd.random() < 0.25:  # nem todo produto vende todo dia
+                    continue
+                qtd = perfil["base"] * perfil["sazonal"].get(dia.month, 1.0) * fator_dia * rnd.uniform(0.6, 1.4)
+                vendas.append(
+                    VendaDB(
+                        produtor_id=1,
+                        produto_id=p.id,
+                        produto_nome=p.nome,
+                        quantidade=round(max(qtd, 1), 1),
+                        unidade=p.unidade,
+                        preco_unitario=round(p.preco_venda * rnd.uniform(0.88, 1.06), 2),
+                        custo_unitario=p.custo_unitario,
+                        canal=rnd.choice(CANAIS_DEMO),
+                        data_venda=dia,
+                    )
+                )
+        db.add_all(vendas)
+        db.commit()
+    finally:
+        db.close()
+
+
 inicializar_dados_demo()
+inicializar_vendas_demo()
 
 
 # ==========================================
@@ -444,6 +512,171 @@ def obter_indicadores_comerciais(produtor_id: int = 1, db: Session = Depends(get
         "produtos": itens,
     }
 
+
+# --- ENDPOINTS DE VENDAS ---
+CANAIS_VENDA = ("Feira", "Mercado local", "CEASA", "Delivery", "Outro")
+
+
+class VendaInput(BaseModel):
+    produtor_id: int = 1
+    produto_id: int
+    quantidade: float = Field(gt=0)
+    preco_unitario: Optional[float] = Field(default=None, gt=0)  # se omitido, usa o preço de venda do produto
+    canal: Literal[CANAIS_VENDA] = "Feira"
+    data_venda: Optional[date] = None                            # se omitido, hoje
+    baixar_estoque: bool = True                                  # desconta a quantidade do estoque
+
+
+class VendaResponse(BaseModel):
+    id: int
+    produtor_id: int
+    produto_id: int
+    produto_nome: str
+    quantidade: float
+    unidade: str
+    preco_unitario: float
+    custo_unitario: float
+    canal: str
+    data_venda: date
+    valor_total: float
+
+    class Config:
+        from_attributes = True
+
+
+def venda_para_dict(v: VendaDB) -> dict:
+    return {
+        "id": v.id,
+        "produtor_id": v.produtor_id,
+        "produto_id": v.produto_id,
+        "produto_nome": v.produto_nome,
+        "quantidade": v.quantidade,
+        "unidade": v.unidade,
+        "preco_unitario": v.preco_unitario,
+        "custo_unitario": v.custo_unitario,
+        "canal": v.canal,
+        "data_venda": v.data_venda,
+        "valor_total": round(v.quantidade * v.preco_unitario, 2),
+    }
+
+
+def resumir_vendas(db: Session, produtor_id: int, dias: int = 90) -> dict:
+    """Agrega as vendas por produto: quantidade, receita, lucro, margem e tendência (últimos 30d vs. 30d anteriores)."""
+    hoje = date.today()
+    inicio = hoje - timedelta(days=dias)
+    vendas = (
+        db.query(VendaDB)
+        .filter(VendaDB.produtor_id == produtor_id, VendaDB.data_venda >= min(inicio, hoje - timedelta(days=60)))
+        .all()
+    )
+
+    por_produto: dict = {}
+    for v in vendas:
+        r = por_produto.setdefault(
+            v.produto_nome,
+            {"produto": v.produto_nome, "unidade": v.unidade, "quantidade": 0.0, "receita": 0.0, "lucro": 0.0,
+             "num_vendas": 0, "_ult30": 0.0, "_ant30": 0.0},
+        )
+        valor = v.quantidade * v.preco_unitario
+        if v.data_venda >= inicio:
+            r["quantidade"] += v.quantidade
+            r["receita"] += valor
+            r["lucro"] += v.quantidade * (v.preco_unitario - (v.custo_unitario or 0))
+            r["num_vendas"] += 1
+        if v.data_venda >= hoje - timedelta(days=30):
+            r["_ult30"] += valor
+        elif v.data_venda >= hoje - timedelta(days=60):
+            r["_ant30"] += valor
+
+    produtos = []
+    for r in por_produto.values():
+        ult, ant = r.pop("_ult30"), r.pop("_ant30")
+        r["quantidade"] = round(r["quantidade"], 1)
+        r["receita"] = round(r["receita"], 2)
+        r["lucro"] = round(r["lucro"], 2)
+        r["margem_realizada_percentual"] = round(r["lucro"] / r["receita"] * 100, 1) if r["receita"] else 0.0
+        r["receita_ultimos_30d"] = round(ult, 2)
+        r["tendencia_30d_percentual"] = round((ult - ant) / ant * 100, 1) if ant else None
+        produtos.append(r)
+    produtos.sort(key=lambda r: r["lucro"], reverse=True)
+
+    return {
+        "periodo_dias": dias,
+        "receita_total": round(sum(p["receita"] for p in produtos), 2),
+        "lucro_total": round(sum(p["lucro"] for p in produtos), 2),
+        "produtos": produtos,
+    }
+
+
+def receita_mensal(db: Session, produtor_id: int, meses: int = 6) -> dict:
+    """Receita por mês e por produto (para a IA enxergar sazonalidade)."""
+    inicio = (date.today().replace(day=1) - timedelta(days=31 * (meses - 1))).replace(day=1)
+    vendas = db.query(VendaDB).filter(VendaDB.produtor_id == produtor_id, VendaDB.data_venda >= inicio).all()
+    tabela: dict = {}
+    for v in vendas:
+        mes = v.data_venda.strftime("%Y-%m")
+        tabela.setdefault(mes, {}).setdefault(v.produto_nome, 0.0)
+        tabela[mes][v.produto_nome] += v.quantidade * v.preco_unitario
+    return {mes: {p: round(val, 2) for p, val in sorted(prods.items())} for mes, prods in sorted(tabela.items())}
+
+
+@app.post("/api/v1/vendas", response_model=VendaResponse, status_code=201)
+def registrar_venda(payload: VendaInput, db: Session = Depends(get_db)):
+    produto = (
+        db.query(ProdutoDB)
+        .filter(ProdutoDB.id == payload.produto_id, ProdutoDB.produtor_id == payload.produtor_id)
+        .first()
+    )
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if payload.baixar_estoque and payload.quantidade > produto.quantidade:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estoque insuficiente: há {produto.quantidade} {produto.unidade} de {produto.nome}",
+        )
+
+    venda = VendaDB(
+        produtor_id=payload.produtor_id,
+        produto_id=produto.id,
+        produto_nome=produto.nome,
+        quantidade=payload.quantidade,
+        unidade=produto.unidade,
+        preco_unitario=payload.preco_unitario or produto.preco_venda,
+        custo_unitario=produto.custo_unitario,
+        canal=payload.canal,
+        data_venda=payload.data_venda or date.today(),
+    )
+    if payload.baixar_estoque:
+        produto.quantidade = round(produto.quantidade - payload.quantidade, 3)
+    db.add(venda)
+    db.commit()
+    db.refresh(venda)
+    return venda_para_dict(venda)
+
+
+@app.get("/api/v1/vendas", response_model=List[VendaResponse])
+def listar_vendas(
+    produtor_id: int = 1,
+    dias: int = 30,
+    produto_id: Optional[int] = None,
+    limite: int = 200,
+    db: Session = Depends(get_db),
+):
+    query = db.query(VendaDB).filter(
+        VendaDB.produtor_id == produtor_id,
+        VendaDB.data_venda >= date.today() - timedelta(days=dias),
+    )
+    if produto_id:
+        query = query.filter(VendaDB.produto_id == produto_id)
+    vendas = query.order_by(VendaDB.data_venda.desc(), VendaDB.id.desc()).limit(limite).all()
+    return [venda_para_dict(v) for v in vendas]
+
+
+@app.get("/api/v1/vendas/resumo")
+def obter_resumo_vendas(produtor_id: int = 1, dias: int = 90, db: Session = Depends(get_db)):
+    return {**resumir_vendas(db, produtor_id, dias), "receita_mensal": receita_mensal(db, produtor_id)}
+
+
 # ==========================================
 # 6. ASSISTENTE IA (CHAT)
 # ==========================================
@@ -452,9 +685,7 @@ def obter_indicadores_comerciais(produtor_id: int = 1, db: Session = Depends(get
 import os
 import json
 from pathlib import Path
-from typing import Literal
 from dotenv import load_dotenv
-from pydantic import Field
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
@@ -496,11 +727,14 @@ class ChatInput(BaseModel):
 SYSTEM_PROMPT = """Você é o AgroSmart Assistente, consultor de um pequeno produtor rural brasileiro.
 Regras:
 - Responda em português do Brasil, de forma curta, prática e direta (no máximo ~8 linhas, use listas quando ajudar).
-- Baseie-se PRIMEIRO nos DADOS ATUAIS abaixo (estoque, margens, validade, clima e alertas). Cite números concretos.
-- "Melhor produto" = considere margem %, valor em estoque, preço de venda vs. preço de mercado e risco de validade. Explique o critério.
-- Perguntas sobre "melhor momento para produzir/plantar X": combine os dados de clima dos sensores com conhecimento agronômico geral
-  (sazonalidade no Brasil, temperatura ideal, ciclo da cultura). Deixe claro o que vem dos dados e o que é recomendação geral.
-- Se faltar dado para responder (ex.: não há histórico de vendas), diga isso e responda com o que existe.
+- Baseie-se PRIMEIRO nos DADOS ATUAIS abaixo (estoque, vendas, margens, validade, clima e alertas). Cite números concretos.
+- "Melhor produto" / "o que mais vende": use o HISTÓRICO DE VENDAS (lucro realizado, receita, giro e tendência dos últimos 30 dias);
+  complemente com o estoque (margem atual, preço vs. mercado, risco de validade). Explique o critério usado.
+- Sazonalidade: use "receita_mensal" para identificar meses fortes/fracos de cada produto.
+- Perguntas sobre "melhor momento para produzir/plantar X": combine o histórico de vendas (quando X vende mais), os dados de clima
+  dos sensores e conhecimento agronômico geral (época no Brasil, temperatura ideal, ciclo da cultura — conte o ciclo para trás a
+  partir do pico de vendas). Deixe claro o que vem dos dados e o que é recomendação geral.
+- Se faltar dado para responder, diga isso e responda com o que existe.
 - Nunca invente números que não estejam nos dados.
 - Assuntos fora de agro/gestão do negócio: recuse educadamente."""
 
@@ -546,6 +780,10 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
     contexto = {
         "agora_horario_local": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "estoque_produtos": produtos,
+        "vendas": {
+            "resumo_ultimos_90_dias": resumir_vendas(db, produtor_id, 90),
+            "receita_mensal": receita_mensal(db, produtor_id, 6),
+        },
         "clima_sensores": clima or "sem leituras de sensores ainda",
         "alertas_recentes": [
             {"tipo": a.tipo, "severidade": a.severidade, "mensagem": a.mensagem, "horario_local": utc_para_local(a.criado_em)}

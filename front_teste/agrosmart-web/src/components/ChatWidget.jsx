@@ -21,8 +21,8 @@ const API_BASE_URL = "http://localhost:8000/api/v1";
 
 const SUGESTOES = [
   "Qual o melhor produto do meu estoque?",
-  "O que devo vender primeiro?",
-  "Qual o melhor momento para plantar tomate?",
+  "Qual produto mais me dá lucro?",
+  "Qual o melhor momento para produzir morango?",
   "Como está o clima da lavoura agora?",
 ];
 

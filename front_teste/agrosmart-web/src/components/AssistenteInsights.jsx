@@ -14,6 +14,16 @@ const FILTROS = [
 
 const formatarDiaCurto = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
+const ROTULOS_TELA = {
+  clima: "Clima & IoT",
+  plantios: "Plantios",
+  vendas: "Vendas",
+  comercial: "Dashboard Comercial",
+  estoque: "Gestão de Estoque",
+  assistente: "Assistente IA",
+};
+const rotuloTela = (tela) => ROTULOS_TELA[tela] || "Sem aba informada";
+
 function Interacao({ item }) {
   const [aberta, setAberta] = useState(false);
   return (
@@ -21,6 +31,11 @@ function Interacao({ item }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="font-medium text-slate-800">“{item.pergunta}”</p>
         <div className="flex items-center gap-2 shrink-0">
+          {item.tela && (
+            <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600" title="Aba aberta ao perguntar">
+              {rotuloTela(item.tela)}
+            </span>
+          )}
           {!item.sucesso && (
             <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">Falha</span>
           )}
@@ -126,7 +141,8 @@ export default function AssistenteInsights() {
         ))}
       </div>
 
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-800 mb-4">Perguntas por dia (últimos 14 dias)</h2>
         <div className="h-56 w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -143,6 +159,29 @@ export default function AssistenteInsights() {
             </BarChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-800">De onde perguntam</h2>
+        <p className="text-xs text-slate-500 mb-4">Aba aberta no momento da pergunta (30 dias)</p>
+        {!e?.por_tela?.length ? (
+          <p className="text-sm text-slate-400">Sem perguntas no período.</p>
+        ) : (
+          <div className="space-y-3">
+            {e.por_tela.map((t) => (
+              <div key={t.tela ?? "nenhuma"}>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-700">{rotuloTela(t.tela)}</span>
+                  <span className="font-semibold text-slate-800">{t.total}</span>
+                </div>
+                <div className="h-2 mt-1 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(t.total / e.total) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       </div>
 
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">

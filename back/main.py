@@ -89,6 +89,26 @@ class ProdutorDB(Base):
     atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class PlantioDB(Base):
+    __tablename__ = "plantios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    produtor_id = Column(Integer, default=1, index=True)
+    cultura = Column(String, index=True)          # Ex: "Tomate"
+    variedade = Column(String)                    # Ex: "Carmem"
+    talhao = Column(String)                       # Ex: "Talhão 1"
+    area_m2 = Column(Float)
+    data_plantio = Column(Date)
+    ciclo_dias = Column(Integer)                  # dias do plantio até o início da colheita
+    janela_colheita_dias = Column(Integer, default=7)  # por quantos dias a colheita se estende
+    producao_estimada = Column(Float)
+    unidade = Column(String)                      # unidade da produção estimada (kg, un, cx)
+    status = Column(String, default="Em andamento")    # "Em andamento", "Colhido", "Perdido"
+    data_colheita_real = Column(Date, nullable=True)
+    observacoes = Column(String, nullable=True)
+    criado_em = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -246,9 +266,48 @@ def inicializar_produtor_demo():
         db.close()
 
 
+def inicializar_plantios_demo():
+    """Plantios de demonstração em fases diferentes (datas relativas a hoje)."""
+    db = SessionLocal()
+    try:
+        if db.query(PlantioDB).count() > 0:
+            return
+        hoje = date.today()
+        #  (cultura, variedade, talhão, m², dias desde o plantio, ciclo, janela, produção, unidade, status, colhido há X dias)
+        demo = [
+            ("Tomate", "Carmem", "Talhão 1", 800, 100, 110, 45, 2400, "kg", "Em andamento", None),
+            ("Alface", "Crespa", "Talhão 2A", 300, 42, 50, 10, 1800, "un", "Em andamento", None),
+            ("Alface", "Crespa", "Talhão 2B", 300, 12, 50, 10, 1800, "un", "Em andamento", None),  # plantio escalonado
+            ("Morango", "Albion", "Talhão 3", 600, 70, 80, 150, 900, "cx", "Em andamento", None),
+            ("Cenoura", "Nantes", "Talhão 4", 500, 25, 100, 15, 1500, "kg", "Em andamento", None),
+            ("Feijão", "Carioca", "Talhão 5", 1500, 120, 90, 10, 900, "kg", "Colhido", 25),
+        ]
+        for cultura, variedade, talhao, area, dias, ciclo, janela, prod, un, status, colhido_ha in demo:
+            db.add(
+                PlantioDB(
+                    produtor_id=1,
+                    cultura=cultura,
+                    variedade=variedade,
+                    talhao=talhao,
+                    area_m2=area,
+                    data_plantio=hoje - timedelta(days=dias),
+                    ciclo_dias=ciclo,
+                    janela_colheita_dias=janela,
+                    producao_estimada=prod,
+                    unidade=un,
+                    status=status,
+                    data_colheita_real=(hoje - timedelta(days=colhido_ha)) if colhido_ha else None,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
 inicializar_dados_demo()
 inicializar_vendas_demo()
 inicializar_produtor_demo()
+inicializar_plantios_demo()
 
 
 # ==========================================
@@ -842,6 +901,145 @@ def previsao_tempo(produtor_id: int = 1, db: Session = Depends(get_db)):
         raise HTTPException(status_code=502, detail=f"Previsão do tempo indisponível: {e}")
 
 
+# --- PLANTIOS / CALENDÁRIO DE SAFRA ---
+STATUS_PLANTIO = ("Em andamento", "Colhido", "Perdido")
+
+
+class PlantioInput(BaseModel):
+    produtor_id: int = 1
+    cultura: str
+    variedade: Optional[str] = None
+    talhao: str
+    area_m2: Optional[float] = Field(default=None, gt=0)
+    data_plantio: date
+    ciclo_dias: int = Field(gt=0, le=730)
+    janela_colheita_dias: int = Field(default=7, ge=1, le=365)
+    producao_estimada: Optional[float] = Field(default=None, ge=0)
+    unidade: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+class PlantioUpdate(BaseModel):
+    talhao: Optional[str] = None
+    area_m2: Optional[float] = Field(default=None, gt=0)
+    data_plantio: Optional[date] = None
+    ciclo_dias: Optional[int] = Field(default=None, gt=0, le=730)
+    janela_colheita_dias: Optional[int] = Field(default=None, ge=1, le=365)
+    producao_estimada: Optional[float] = Field(default=None, ge=0)
+    unidade: Optional[str] = None
+    status: Optional[Literal[STATUS_PLANTIO]] = None
+    data_colheita_real: Optional[date] = None
+    observacoes: Optional[str] = None
+
+
+def enriquecer_plantio(p: PlantioDB) -> dict:
+    """Calcula datas de colheita, progresso e fase atual do plantio."""
+    hoje = date.today()
+    inicio_colheita = p.data_plantio + timedelta(days=p.ciclo_dias)
+    fim_colheita = inicio_colheita + timedelta(days=p.janela_colheita_dias or 0)
+    dias_desde = (hoje - p.data_plantio).days
+    progresso = max(0.0, min(100.0, round(dias_desde / p.ciclo_dias * 100, 1)))
+
+    if p.status != "Em andamento":
+        fase = p.status
+    elif hoje > fim_colheita:
+        fase = "Atrasado (janela de colheita passou)"
+    elif hoje >= inicio_colheita:
+        fase = "Em colheita"
+    elif progresso >= 85:
+        fase = "Pré-colheita"
+    elif progresso >= 30:
+        fase = "Desenvolvimento"
+    else:
+        fase = "Inicial"
+
+    return {
+        "id": p.id,
+        "produtor_id": p.produtor_id,
+        "cultura": p.cultura,
+        "variedade": p.variedade,
+        "talhao": p.talhao,
+        "area_m2": p.area_m2,
+        "data_plantio": p.data_plantio,
+        "ciclo_dias": p.ciclo_dias,
+        "janela_colheita_dias": p.janela_colheita_dias,
+        "producao_estimada": p.producao_estimada,
+        "unidade": p.unidade,
+        "status": p.status,
+        "data_colheita_real": p.data_colheita_real,
+        "observacoes": p.observacoes,
+        "inicio_colheita_previsto": inicio_colheita,
+        "fim_colheita_previsto": fim_colheita,
+        "dias_desde_plantio": dias_desde,
+        "dias_para_colheita": (inicio_colheita - hoje).days,
+        "progresso_percentual": progresso,
+        "fase": fase,
+    }
+
+
+def buscar_plantio(db: Session, plantio_id: int) -> PlantioDB:
+    plantio = db.query(PlantioDB).filter(PlantioDB.id == plantio_id).first()
+    if not plantio:
+        raise HTTPException(status_code=404, detail="Plantio não encontrado")
+    return plantio
+
+
+@app.post("/api/v1/plantios", status_code=201)
+def criar_plantio(payload: PlantioInput, db: Session = Depends(get_db)):
+    plantio = PlantioDB(**payload.model_dump(), status="Em andamento")
+    db.add(plantio)
+    db.commit()
+    db.refresh(plantio)
+    return enriquecer_plantio(plantio)
+
+
+@app.get("/api/v1/plantios")
+def listar_plantios(
+    produtor_id: int = 1,
+    status: Optional[Literal[STATUS_PLANTIO]] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(PlantioDB).filter(PlantioDB.produtor_id == produtor_id)
+    if status:
+        query = query.filter(PlantioDB.status == status)
+    plantios = [enriquecer_plantio(p) for p in query.all()]
+    return sorted(plantios, key=lambda p: p["inicio_colheita_previsto"])
+
+
+@app.put("/api/v1/plantios/{plantio_id}")
+def atualizar_plantio(plantio_id: int, payload: PlantioUpdate, db: Session = Depends(get_db)):
+    plantio = buscar_plantio(db, plantio_id)
+    dados = payload.model_dump(exclude_unset=True)
+    # Ao marcar como colhido sem informar a data, assume hoje
+    if dados.get("status") == "Colhido" and not dados.get("data_colheita_real") and not plantio.data_colheita_real:
+        dados["data_colheita_real"] = date.today()
+    for campo, valor in dados.items():
+        setattr(plantio, campo, valor)
+    db.commit()
+    db.refresh(plantio)
+    return enriquecer_plantio(plantio)
+
+
+@app.delete("/api/v1/plantios/{plantio_id}", status_code=204)
+def deletar_plantio(plantio_id: int, db: Session = Depends(get_db)):
+    db.delete(buscar_plantio(db, plantio_id))
+    db.commit()
+    return None
+
+
+@app.get("/api/v1/plantios/calendario")
+def calendario_colheitas(produtor_id: int = 1, dias: int = 60, db: Session = Depends(get_db)):
+    """Colheitas previstas nos próximos N dias (inclui as que já estão em andamento)."""
+    hoje = date.today()
+    limite = hoje + timedelta(days=dias)
+    ativos = db.query(PlantioDB).filter(PlantioDB.produtor_id == produtor_id, PlantioDB.status == "Em andamento").all()
+    itens = [enriquecer_plantio(p) for p in ativos]
+    return sorted(
+        [i for i in itens if i["inicio_colheita_previsto"] <= limite and i["fim_colheita_previsto"] >= hoje],
+        key=lambda i: i["inicio_colheita_previsto"],
+    )
+
+
 # ==========================================
 # 6. ASSISTENTE IA (CHAT)
 # ==========================================
@@ -902,6 +1100,12 @@ Regras:
 - Previsão do tempo (previsao_7_dias): use para chuva, irrigação, colheita e aplicações. Irrigação: compare chuva prevista com
   evapotranspiração e com a umidade do solo dos sensores. Evite recomendar colheita/aplicação em dias de chuva forte ou vento alto.
   Sempre diga o dia da semana junto com a data.
+- Plantios (plantios_ativos): use para "o que colho/quando colho", "vou ter X para vender em <mês>?" e planejamento de talhões.
+  Cruze as datas de colheita com a previsão do tempo, o estoque atual (evitar colher mais enquanto há estoque vencendo) e o
+  histórico de vendas (se a colheita cai num mês fraco, avise). Para sugerir novo plantio, indique o talhão que fica livre e quando
+  (fim_colheita_previsto). Fases "Atrasado" merecem alerta.
+  Para "vou ter X em <período>?": haverá produto se o intervalo inicio_colheita_previsto–fim_colheita_previsto de algum plantio
+  de X se sobrepuser ao período. Se a sobreposição for parcial, diga exatamente quais dias ficam cobertos e quais ficam sem produto.
 - Se faltar dado para responder, diga isso e responda com o que existe.
 - Nunca invente números que não estejam nos dados.
 - Assuntos fora de agro/gestão do negócio: recuse educadamente."""
@@ -968,6 +1172,22 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
         "hoje_dia_semana": DIAS_SEMANA[date.today().weekday()],
         "perfil_propriedade": perfil or "não cadastrado",
         "previsao_7_dias": previsao,
+        "plantios_ativos": [
+            enriquecer_plantio(p)
+            for p in db.query(PlantioDB)
+            .filter(PlantioDB.produtor_id == produtor_id, PlantioDB.status == "Em andamento")
+            .all()
+        ],
+        "plantios_colhidos_recentes": [
+            enriquecer_plantio(p)
+            for p in db.query(PlantioDB)
+            .filter(
+                PlantioDB.produtor_id == produtor_id,
+                PlantioDB.status != "Em andamento",
+                PlantioDB.data_colheita_real >= date.today() - timedelta(days=90),
+            )
+            .all()
+        ],
         "estoque_produtos": produtos,
         "vendas": {
             "resumo_ultimos_90_dias": resumir_vendas(db, produtor_id, 90),

@@ -20,7 +20,7 @@ const MD_COMPONENTS = {
 const API_BASE_URL = "http://localhost:8000/api/v1";
 
 const SUGESTOES = [
-  "Qual o melhor produto do meu estoque?",
+  "O que vou colher nas próximas 2 semanas?",
   "Qual produto mais me dá lucro?",
   "Qual o melhor momento para produzir morango?",
   "Vou precisar irrigar esta semana?",

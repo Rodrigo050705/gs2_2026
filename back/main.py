@@ -715,7 +715,9 @@ def resumir_vendas(db: Session, produtor_id: int, dias: int = 90) -> dict:
 
 def receita_mensal(db: Session, produtor_id: int, meses: int = 6) -> dict:
     """Receita por mês e por produto (para a IA enxergar sazonalidade)."""
-    inicio = (date.today().replace(day=1) - timedelta(days=31 * (meses - 1))).replace(day=1)
+    hoje = date.today()
+    indice_mes = hoje.year * 12 + (hoje.month - 1) - (meses - 1)  # volta (meses-1) meses, incluindo o atual
+    inicio = date(indice_mes // 12, indice_mes % 12 + 1, 1)
     vendas = db.query(VendaDB).filter(VendaDB.produtor_id == produtor_id, VendaDB.data_venda >= inicio).all()
     tabela: dict = {}
     for v in vendas:

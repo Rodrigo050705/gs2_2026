@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Filter,
 } from "lucide-react";
+import PrevisaoTempo from "./PrevisaoTempo";
 
 const API_BASE_URL = "http://localhost:8000/api/v1";
 
@@ -223,6 +224,9 @@ export default function ClimaDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Previsão do tempo + condições por cultura */}
+      <PrevisaoTempo />
 
       {/* Gráfico Principal (Recharts) */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">

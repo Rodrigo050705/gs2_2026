@@ -145,6 +145,23 @@ class ResumoDiaDB(Base):
     gerado_em = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class ChatInteracaoDB(Base):
+    """Cada pergunta feita ao assistente, com a resposta e a avaliação do produtor (👍/👎)."""
+    __tablename__ = "chat_interacoes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    produtor_id = Column(Integer, index=True)
+    pergunta = Column(String)
+    resposta = Column(String, nullable=True)
+    modelo = Column(String, nullable=True)
+    sucesso = Column(Boolean, default=True)
+    erro = Column(String, nullable=True)
+    duracao_ms = Column(Integer)
+    feedback = Column(Integer, nullable=True)      # 1 = 👍, -1 = 👎, None = sem avaliação
+    comentario = Column(String, nullable=True)     # o que faltou (opcional, junto do 👎)
+    criado_em = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -1519,11 +1536,114 @@ def conversar_com_assistente(payload: ChatInput, db: Session = Depends(get_db)):
     ]
     contents.append(types.Content(role="user", parts=[types.Part(text=payload.mensagem)]))
 
+    inicio = _time.monotonic()
+    interacao = ChatInteracaoDB(produtor_id=payload.produtor_id, pergunta=payload.mensagem)
     try:
-        texto, _modelo = gerar_com_ia(contents, f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}")
+        texto, modelo = gerar_com_ia(contents, f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}")
+        interacao.resposta = texto or "Não consegui gerar uma resposta agora."
+        interacao.modelo, interacao.sucesso = modelo, True
     except IAIndisponivel as e:
-        raise HTTPException(status_code=503, detail=e.mensagem)
-    return {"resposta": texto or "Não consegui gerar uma resposta agora."}
+        interacao.sucesso, interacao.erro = False, e.mensagem
+    finally:
+        interacao.duracao_ms = int((_time.monotonic() - inicio) * 1000)
+        db.add(interacao)
+        db.commit()
+
+    if not interacao.sucesso:
+        raise HTTPException(status_code=503, detail=interacao.erro)
+    return {"resposta": interacao.resposta, "interacao_id": interacao.id}
+
+
+# --- Histórico de perguntas e avaliação (👍/👎) ---
+class FeedbackInput(BaseModel):
+    nota: Literal[1, -1]
+    comentario: Optional[str] = Field(default=None, max_length=500)
+
+
+def interacao_para_dict(i: ChatInteracaoDB) -> dict:
+    return {
+        "id": i.id,
+        "pergunta": i.pergunta,
+        "resposta": i.resposta,
+        "modelo": i.modelo,
+        "sucesso": i.sucesso,
+        "erro": i.erro,
+        "duracao_ms": i.duracao_ms,
+        "feedback": i.feedback,
+        "comentario": i.comentario,
+        "criado_em": marcar_como_utc(i.criado_em),
+    }
+
+
+@app.post("/api/v1/chat/{interacao_id}/feedback")
+def avaliar_resposta(interacao_id: int, payload: FeedbackInput, db: Session = Depends(get_db)):
+    interacao = db.query(ChatInteracaoDB).filter(ChatInteracaoDB.id == interacao_id).first()
+    if not interacao:
+        raise HTTPException(status_code=404, detail="Interação não encontrada")
+    if not interacao.sucesso:
+        raise HTTPException(status_code=400, detail="Só respostas da IA podem ser avaliadas")
+    interacao.feedback = payload.nota
+    # O comentário só vale junto do 👎; trocar para 👍 descarta o antigo
+    if payload.nota == -1:
+        interacao.comentario = (payload.comentario or "").strip() or None
+    else:
+        interacao.comentario = None
+    db.commit()
+    return interacao_para_dict(interacao)
+
+
+@app.get("/api/v1/chat/interacoes")
+def listar_interacoes(
+    produtor_id: int = 1,
+    avaliacao: Optional[Literal["positivas", "negativas", "sem_avaliacao", "falhas"]] = None,
+    limite: int = 50,
+    db: Session = Depends(get_db),
+):
+    query = db.query(ChatInteracaoDB).filter(ChatInteracaoDB.produtor_id == produtor_id)
+    if avaliacao == "positivas":
+        query = query.filter(ChatInteracaoDB.feedback == 1)
+    elif avaliacao == "negativas":
+        query = query.filter(ChatInteracaoDB.feedback == -1)
+    elif avaliacao == "sem_avaliacao":
+        query = query.filter(ChatInteracaoDB.feedback.is_(None), ChatInteracaoDB.sucesso.is_(True))
+    elif avaliacao == "falhas":
+        query = query.filter(ChatInteracaoDB.sucesso.is_(False))
+    itens = query.order_by(ChatInteracaoDB.criado_em.desc(), ChatInteracaoDB.id.desc()).limit(limite).all()
+    return [interacao_para_dict(i) for i in itens]
+
+
+@app.get("/api/v1/chat/estatisticas")
+def estatisticas_chat(produtor_id: int = 1, dias: int = 30, db: Session = Depends(get_db)):
+    desde = datetime.utcnow() - timedelta(days=dias)
+    itens = (
+        db.query(ChatInteracaoDB)
+        .filter(ChatInteracaoDB.produtor_id == produtor_id, ChatInteracaoDB.criado_em >= desde)
+        .all()
+    )
+    respondidas = [i for i in itens if i.sucesso]
+    positivas = sum(1 for i in itens if i.feedback == 1)
+    negativas = sum(1 for i in itens if i.feedback == -1)
+
+    # Perguntas por dia (horário local), dos últimos 14 dias, inclusive os sem perguntas
+    hoje_local = datetime.now().date()
+    por_dia = {(hoje_local - timedelta(days=d)).isoformat(): 0 for d in range(13, -1, -1)}
+    for i in itens:
+        dia = marcar_como_utc(i.criado_em).astimezone().date().isoformat()
+        if dia in por_dia:
+            por_dia[dia] += 1
+
+    return {
+        "periodo_dias": dias,
+        "total": len(itens),
+        "respondidas": len(respondidas),
+        "falhas": len(itens) - len(respondidas),
+        "avaliadas": positivas + negativas,
+        "positivas": positivas,
+        "negativas": negativas,
+        "satisfacao_percentual": round(positivas / (positivas + negativas) * 100, 1) if positivas + negativas else None,
+        "tempo_medio_s": round(sum(i.duracao_ms for i in respondidas) / len(respondidas) / 1000, 1) if respondidas else None,
+        "perguntas_por_dia": [{"data": d, "total": n} for d, n in por_dia.items()],
+    }
 
 
 # ==========================================

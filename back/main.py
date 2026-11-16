@@ -1,5 +1,7 @@
+import time as _time
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Literal, Optional
+import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -69,6 +71,22 @@ class VendaDB(Base):
     canal = Column(String)                        # Ex: "Feira", "Mercado local", "CEASA", "Delivery"
     data_venda = Column(Date, index=True)
     criado_em = Column(DateTime, default=datetime.utcnow)
+
+
+class ProdutorDB(Base):
+    __tablename__ = "produtores"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String)
+    cidade = Column(String)
+    uf = Column(String(2))
+    latitude = Column(Float)
+    longitude = Column(Float)
+    area_hectares = Column(Float)
+    irrigacao = Column(String)      # Ex: "Gotejamento", "Aspersão", "Nenhuma"
+    tipo_solo = Column(String)      # Ex: "Argiloso", "Arenoso", "Misto"
+    culturas = Column(String)       # lista separada por vírgula
+    atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 Base.metadata.create_all(bind=engine)
@@ -204,8 +222,33 @@ def inicializar_vendas_demo(dias: int = 180):
         db.close()
 
 
+def inicializar_produtor_demo():
+    """Perfil da propriedade de demonstração (Atibaia-SP, região de morango e hortaliças)."""
+    db = SessionLocal()
+    try:
+        if db.query(ProdutorDB).filter(ProdutorDB.id == 1).first() is None:
+            db.add(
+                ProdutorDB(
+                    id=1,
+                    nome="Sítio Demo AgroSmart",
+                    cidade="Atibaia",
+                    uf="SP",
+                    latitude=-23.1171,
+                    longitude=-46.5503,
+                    area_hectares=4.5,
+                    irrigacao="Gotejamento",
+                    tipo_solo="Argiloso",
+                    culturas="Tomate, Alface, Morango, Cenoura, Feijão",
+                )
+            )
+            db.commit()
+    finally:
+        db.close()
+
+
 inicializar_dados_demo()
 inicializar_vendas_demo()
+inicializar_produtor_demo()
 
 
 # ==========================================
@@ -677,6 +720,128 @@ def obter_resumo_vendas(produtor_id: int = 1, dias: int = 90, db: Session = Depe
     return {**resumir_vendas(db, produtor_id, dias), "receita_mensal": receita_mensal(db, produtor_id)}
 
 
+# --- PERFIL DO PRODUTOR ---
+class ProdutorBase(BaseModel):
+    nome: str
+    cidade: str
+    uf: str = Field(min_length=2, max_length=2)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    area_hectares: Optional[float] = None
+    irrigacao: Optional[str] = None
+    tipo_solo: Optional[str] = None
+    culturas: Optional[str] = None
+
+
+class ProdutorUpdate(BaseModel):
+    nome: Optional[str] = None
+    cidade: Optional[str] = None
+    uf: Optional[str] = Field(default=None, min_length=2, max_length=2)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    area_hectares: Optional[float] = None
+    irrigacao: Optional[str] = None
+    tipo_solo: Optional[str] = None
+    culturas: Optional[str] = None
+
+
+class ProdutorResponse(ProdutorBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+def buscar_produtor(db: Session, produtor_id: int) -> ProdutorDB:
+    produtor = db.query(ProdutorDB).filter(ProdutorDB.id == produtor_id).first()
+    if not produtor:
+        raise HTTPException(status_code=404, detail="Produtor não encontrado")
+    return produtor
+
+
+@app.get("/api/v1/produtores/{produtor_id}", response_model=ProdutorResponse)
+def obter_produtor(produtor_id: int, db: Session = Depends(get_db)):
+    return buscar_produtor(db, produtor_id)
+
+
+@app.put("/api/v1/produtores/{produtor_id}", response_model=ProdutorResponse)
+def atualizar_produtor(produtor_id: int, payload: ProdutorUpdate, db: Session = Depends(get_db)):
+    produtor = buscar_produtor(db, produtor_id)
+    for campo, valor in payload.model_dump(exclude_unset=True).items():
+        setattr(produtor, campo, valor.upper() if campo == "uf" and valor else valor)
+    db.commit()
+    db.refresh(produtor)
+    _cache_previsao.pop(produtor_id, None)  # localização pode ter mudado
+    return produtor
+
+
+# --- PREVISÃO DO TEMPO (Open-Meteo: grátis, sem chave) ---
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+DIAS_SEMANA = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+PREVISAO_CACHE_SEGUNDOS = 60 * 60  # a previsão muda pouco; evita chamar a API a cada pergunta
+_cache_previsao: dict = {}          # produtor_id -> (instante, previsão)
+
+
+def obter_previsao_tempo(produtor: ProdutorDB, dias: int = 7) -> dict:
+    """Previsão diária para a localização do produtor. Levanta exceção se a Open-Meteo falhar."""
+    em_cache = _cache_previsao.get(produtor.id)
+    if em_cache and _time.time() - em_cache[0] < PREVISAO_CACHE_SEGUNDOS:
+        return em_cache[1]
+
+    resp = requests.get(
+        OPEN_METEO_URL,
+        params={
+            "latitude": produtor.latitude,
+            "longitude": produtor.longitude,
+            "daily": ",".join([
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "precipitation_sum",
+                "precipitation_probability_max",
+                "et0_fao_evapotranspiration",
+                "wind_speed_10m_max",
+            ]),
+            "timezone": "America/Sao_Paulo",
+            "forecast_days": dias,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    d = resp.json()["daily"]
+
+    dias_previsao = [
+        {
+            "data": d["time"][i],
+            "dia_semana": DIAS_SEMANA[date.fromisoformat(d["time"][i]).weekday()],
+            "temp_max": d["temperature_2m_max"][i],
+            "temp_min": d["temperature_2m_min"][i],
+            "chuva_mm": d["precipitation_sum"][i],
+            "prob_chuva_percentual": d["precipitation_probability_max"][i],
+            "evapotranspiracao_mm": d["et0_fao_evapotranspiration"][i],  # perda de água do solo/planta
+            "vento_max_kmh": d["wind_speed_10m_max"][i],
+        }
+        for i in range(len(d["time"]))
+    ]
+    previsao = {
+        "local": f"{produtor.cidade}-{produtor.uf}",
+        "fonte": "Open-Meteo",
+        "dias": dias_previsao,
+        "chuva_total_mm": round(sum(x["chuva_mm"] or 0 for x in dias_previsao), 1),
+        "evapotranspiracao_total_mm": round(sum(x["evapotranspiracao_mm"] or 0 for x in dias_previsao), 1),
+    }
+    _cache_previsao[produtor.id] = (_time.time(), previsao)
+    return previsao
+
+
+@app.get("/api/v1/previsao")
+def previsao_tempo(produtor_id: int = 1, db: Session = Depends(get_db)):
+    produtor = buscar_produtor(db, produtor_id)
+    try:
+        return obter_previsao_tempo(produtor)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Previsão do tempo indisponível: {e}")
+
+
 # ==========================================
 # 6. ASSISTENTE IA (CHAT)
 # ==========================================
@@ -732,8 +897,11 @@ Regras:
   complemente com o estoque (margem atual, preço vs. mercado, risco de validade). Explique o critério usado.
 - Sazonalidade: use "receita_mensal" para identificar meses fortes/fracos de cada produto.
 - Perguntas sobre "melhor momento para produzir/plantar X": combine o histórico de vendas (quando X vende mais), os dados de clima
-  dos sensores e conhecimento agronômico geral (época no Brasil, temperatura ideal, ciclo da cultura — conte o ciclo para trás a
-  partir do pico de vendas). Deixe claro o que vem dos dados e o que é recomendação geral.
+  dos sensores, a localização da propriedade (perfil_propriedade) e conhecimento agronômico geral (época na região, temperatura
+  ideal, ciclo da cultura — conte o ciclo para trás a partir do pico de vendas). Deixe claro o que vem dos dados e o que é geral.
+- Previsão do tempo (previsao_7_dias): use para chuva, irrigação, colheita e aplicações. Irrigação: compare chuva prevista com
+  evapotranspiração e com a umidade do solo dos sensores. Evite recomendar colheita/aplicação em dias de chuva forte ou vento alto.
+  Sempre diga o dia da semana junto com a data.
 - Se faltar dado para responder, diga isso e responda com o que existe.
 - Nunca invente números que não estejam nos dados.
 - Assuntos fora de agro/gestão do negócio: recuse educadamente."""
@@ -777,8 +945,29 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
         .all()
     )
 
+    produtor = db.query(ProdutorDB).filter(ProdutorDB.id == produtor_id).first()
+    perfil = None
+    previsao = "perfil sem localização cadastrada"
+    if produtor:
+        perfil = {
+            "nome": produtor.nome,
+            "local": f"{produtor.cidade}-{produtor.uf}",
+            "area_hectares": produtor.area_hectares,
+            "irrigacao": produtor.irrigacao,
+            "tipo_solo": produtor.tipo_solo,
+            "culturas": produtor.culturas,
+        }
+        try:
+            previsao = obter_previsao_tempo(produtor)
+        except Exception as e:
+            print(f"[chat] previsão indisponível: {e}")
+            previsao = "previsão do tempo indisponível no momento"
+
     contexto = {
         "agora_horario_local": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "hoje_dia_semana": DIAS_SEMANA[date.today().weekday()],
+        "perfil_propriedade": perfil or "não cadastrado",
+        "previsao_7_dias": previsao,
         "estoque_produtos": produtos,
         "vendas": {
             "resumo_ultimos_90_dias": resumir_vendas(db, produtor_id, 90),

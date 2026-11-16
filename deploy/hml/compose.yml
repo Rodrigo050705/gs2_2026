@@ -7,7 +7,7 @@ name: agrosmart-hml
 services:
   api:
     # Trocada pelo CI (job deploy-hml) a cada merge na main. Não editar à mão, salvo num rollback.
-    image: ghcr.io/rodrigo050705/agrosmart-api:sha-4e299ee
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-76f9708
     restart: unless-stopped
     environment:
       DATABASE_URL: sqlite:////data/agrosmart.db
@@ -24,7 +24,7 @@ services:
 
   simulador:
     # Mesma imagem da API: gera leituras dos sensores (demo) a cada 5 s. Sai quando houver sensores reais.
-    image: ghcr.io/rodrigo050705/agrosmart-api:sha-4e299ee
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-76f9708
     restart: unless-stopped
     command: ["python", "/app/iot-simulator/iot_simulator.py", "--url", "http://api:8000/api/v1/telemetria"]
     depends_on:
@@ -35,7 +35,7 @@ services:
 
   web:
     # Trocada pelo CI junto com a da API (sempre a mesma tag).
-    image: ghcr.io/rodrigo050705/agrosmart-web:sha-4e299ee
+    image: ghcr.io/rodrigo050705/agrosmart-web:sha-76f9708
     restart: unless-stopped
     depends_on:
       api:

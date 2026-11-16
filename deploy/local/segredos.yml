@@ -1,0 +1,13 @@
+# Override para rodar um compose de ambiente (hml ou prod) na sua máquina COM AS IMAGENS PUBLICADAS
+# no GHCR. Só troca a pasta de segredos (deploy/local/segredos, fora do Git) — as imagens são as do
+# compose, exatamente como o Portainer sobe.
+#
+#   docker compose -f deploy/hml/compose.yml -f deploy/local/segredos.yml up    → http://localhost:8092
+#
+# Para testar imagens construídas localmente, use deploy/local/compose.yml.
+
+services:
+  api:
+    volumes:
+      # Relativo à pasta do primeiro arquivo (deploy/hml ou deploy/prod).
+      - ../local/segredos:/run/secrets:ro

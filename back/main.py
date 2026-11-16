@@ -1,4 +1,5 @@
 import json
+import os
 import time as _time
 import unicodedata
 from pathlib import Path
@@ -8,13 +9,32 @@ import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Date, Boolean
+from sqlalchemy import create_engine, text, Column, Integer, Float, String, DateTime, Date, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+# ==========================================
+# 0. CONFIGURAÇÃO (.env local + segredos por arquivo nos ambientes)
+# ==========================================
+from dotenv import load_dotenv
+
+# Desenvolvimento: back/.env (fora do Git).
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# Homologação/produção: um arquivo por chave em /run/secrets (key-per-file, como nos outros apps
+# do gtlabs-deploy). O nome do arquivo é a variável (ex.: GEMINI_API_KEY) e o arquivo vale mais
+# que a variável de ambiente de mesmo nome.
+PASTA_SEGREDOS = Path(os.getenv("SECRETS_DIR", "/run/secrets"))
+if PASTA_SEGREDOS.is_dir():
+    for arquivo in PASTA_SEGREDOS.iterdir():
+        if arquivo.is_file():
+            os.environ[arquivo.name] = arquivo.read_text(encoding="utf-8").strip()
+
 
 # ==========================================
 # 1. CONFIGURAÇÃO DO BANCO (SQLite)
 # ==========================================
-DATABASE_URL = "sqlite:///./agrosmart.db"
+# No container o banco fica num volume (ex.: sqlite:////data/agrosmart.db).
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./agrosmart.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -478,6 +498,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health(db: Session = Depends(get_db)):
+    """Usado pelo healthcheck do container: confirma que a API responde e que o banco abre."""
+    db.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 
 # --- ENDPOINTS DE TELEMETRIA & ALERTAS ---
@@ -1129,15 +1156,11 @@ def condicoes_cultura(nome: str, produtor_id: int = 1, db: Session = Depends(get
 # ==========================================
 # 6. ASSISTENTE IA (CHAT)
 # ==========================================
-# A chave fica em back/.env (veja back/.env.example), carregada automaticamente abaixo.
+# A chave GEMINI_API_KEY vem de back/.env (dev) ou de /run/secrets (hml/prod) — ver seção 0.
 #   Chave grátis em: https://aistudio.google.com/apikey
-import os
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
-
-load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # flash-lite: respostas em ~2-4s; os "flash" maiores estavam sobrecarregados (timeouts de 25s+)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")

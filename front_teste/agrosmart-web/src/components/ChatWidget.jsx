@@ -17,7 +17,7 @@ const MD_COMPONENTS = {
   ),
 };
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+import { API_BASE_URL } from "../api";
 
 const SUGESTOES = [
   "O que vou colher nas próximas 2 semanas?",

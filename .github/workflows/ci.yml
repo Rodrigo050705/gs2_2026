@@ -1,0 +1,213 @@
+# CI/CD do AgroSmart (mesmo fluxo do Chave44 e do AlcoolGasolina, mas autocontido: os composes
+# dos ambientes ficam neste repositório, em deploy/). Desenho e passo a passo em docs/cicd.md.
+#
+#   PR            → testes da API (pytest) e do front (lint + build)
+#   merge na main → testes → imagens sha-<7> no GHCR (api e web)
+#                   → commit na main trocando deploy/hml/compose.yml → o Portainer sobe a hml
+#   tag vX.Y.Z    → promover: as mesmas imagens ganham a tag X.Y.Z → PR neste repositório
+#                   trocando deploy/prod/compose.yml; o merge desse PR é a aprovação da produção
+#
+# Tudo com o GITHUB_TOKEN: nenhum token de outro repositório. Commits e PRs feitos por ele não
+# disparam workflows, então o commit do deploy-hml não gera um novo ciclo de CI.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Na main, nunca cancela: dois merges seguidos precisam deixar o deploy no último.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # GHCR exige o dono em minúsculas.
+  IMAGEM_API: ghcr.io/rodrigo050705/agrosmart-api
+  IMAGEM_WEB: ghcr.io/rodrigo050705/agrosmart-web
+  APP: agrosmart
+
+jobs:
+  testes-api:
+    # Numa tag não há o que testar: o commit já passou pelos testes no merge na main.
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      # Banco SQLite temporário e dublês para Gemini e Open-Meteo: nada sai do runner.
+      - run: pytest --junitxml=resultados-api.xml
+        working-directory: back
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: resultados-testes-api
+          path: back/resultados-api.xml
+          if-no-files-found: ignore
+
+  testes-web:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front_teste/agrosmart-web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front_teste/agrosmart-web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  imagem:
+    needs: [testes-api, testes-web]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - nome: api
+            context: .
+            dockerfile: back/Dockerfile
+          - nome: web
+            context: front_teste/agrosmart-web
+            dockerfile: front_teste/agrosmart-web/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+      - id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ matrix.nome == 'api' && env.IMAGEM_API || env.IMAGEM_WEB }}:${{ steps.tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.nome }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nome }}
+
+  deploy-hml:
+    needs: imagem
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # A ponta da main (não o commit do merge): pode haver outro commit depois dele.
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - run: |
+          TAG="sha-${GITHUB_SHA::7}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Até 3 tentativas: se outro merge entrar na main entre o checkout e o push, rebase e repete.
+          for TENTATIVA in 1 2 3; do
+            # api e simulador usam a mesma imagem; o web tem a sua.
+            sed -i -e "s|image: ${IMAGEM_API}:.*|image: ${IMAGEM_API}:${TAG}|" \
+                   -e "s|image: ${IMAGEM_WEB}:.*|image: ${IMAGEM_WEB}:${TAG}|" deploy/hml/compose.yml
+            # Numa reexecução do mesmo commit, o compose já está na tag: nada a fazer.
+            if git diff --quiet; then
+              echo "deploy/hml/compose.yml já está em ${TAG}."
+              exit 0
+            fi
+            git commit -am "${APP} hml: ${TAG}"
+            git push origin HEAD:main && exit 0
+            echo "Push recusado (main andou); tentando de novo."
+            git reset --hard -q origin/main
+            git pull -q --rebase origin main
+          done
+          echo "::error::Não consegui atualizar deploy/hml/compose.yml na main."
+          exit 1
+
+  promover:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    steps:
+      - name: Versão
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::A tag precisa ser vX.Y.Z (ex.: v1.2.0), e não '$GITHUB_REF_NAME'."
+            exit 1
+          fi
+          echo "VERSAO=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "ORIGEM=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Só sobe para produção o que a homologação já recebeu: as imagens sha-… só existem se o
+      # commit da tag passou pelo CI da main. Sem elas, nada de rebuild: falha aqui.
+      - name: Etiquetar as imagens da homologação
+        run: |
+          for IMAGEM in "$IMAGEM_API" "$IMAGEM_WEB"; do
+            if ! docker buildx imagetools inspect "$IMAGEM:$ORIGEM" >/dev/null 2>&1; then
+              echo "::error::Não existe $IMAGEM:$ORIGEM. A tag precisa estar num commit da main que já passou pelo CI (se o CI da main ainda está rodando, espere e reexecute este job)."
+              exit 1
+            fi
+          done
+          for IMAGEM in "$IMAGEM_API" "$IMAGEM_WEB"; do
+            docker buildx imagetools create -t "$IMAGEM:$VERSAO" "$IMAGEM:$ORIGEM"
+          done
+      # A ponta da main: o PR troca só o deploy/prod/compose.yml dela.
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: PR de produção
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RAMO="deploy/prod-$VERSAO"
+          git switch -c "$RAMO"
+          sed -i -e "s|image: ${IMAGEM_API}:.*|image: ${IMAGEM_API}:${VERSAO}|" \
+                 -e "s|image: ${IMAGEM_WEB}:.*|image: ${IMAGEM_WEB}:${VERSAO}|" deploy/prod/compose.yml
+          if git diff --quiet; then
+            echo "::error::deploy/prod/compose.yml já está em $VERSAO."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "${APP} prod: $VERSAO"
+          # Numa reexecução, o ramo já existe: sobrescreve, e o PR aberto antes passa a mostrar este.
+          git push --force -u origin "$RAMO"
+          if [ -n "$(gh pr list --head "$RAMO" --state open --json number --jq '.[].number')" ]; then
+            echo "O PR de $RAMO já está aberto."
+            exit 0
+          fi
+          # Requer "Allow GitHub Actions to create and approve pull requests" nas configurações do repositório.
+          gh pr create --base main --head "$RAMO" \
+            --title "Produção: agrosmart $VERSAO" \
+            --body "Promove \`$IMAGEM_API:$ORIGEM\` e \`$IMAGEM_WEB:$ORIGEM\`, as imagens que já estão na homologação, com a tag \`$VERSAO\` ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA).
+
+          O merge deste PR coloca a versão no ar: o Portainer sobe a produção no próximo polling. Rollback: um PR revertendo este."

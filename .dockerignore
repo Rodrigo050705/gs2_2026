@@ -1,0 +1,20 @@
+# Contexto da imagem da API (raiz do repositório). O front tem o próprio .dockerignore.
+.git
+.github
+.claude
+.idea
+.vscode
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.env
+*.db
+*.db-journal
+*.log
+*.docx
+docs
+deploy
+front_teste
+back/tests
+back/Dockerfile
+docker-compose*.yml

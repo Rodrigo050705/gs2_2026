@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CloudRain, CloudSun, Sun, Wind, MapPin, Leaf, CheckCircle2 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+import { API_BASE_URL } from "../api";
 const ATUALIZAR_A_CADA_MS = 10 * 60 * 1000; // a previsão muda pouco
 
 const iconeDoDia = (d) => {

@@ -159,6 +159,7 @@ class ChatInteracaoDB(Base):
     duracao_ms = Column(Integer)
     feedback = Column(Integer, nullable=True)      # 1 = 👍, -1 = 👎, None = sem avaliação
     comentario = Column(String, nullable=True)     # o que faltou (opcional, junto do 👎)
+    tela = Column(String, nullable=True)           # aba em que o produtor estava ao perguntar
     criado_em = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -170,10 +171,15 @@ def garantir_colunas_novas():
     Acrescenta aqui as colunas que entraram depois (só mudanças aditivas), para bancos antigos."""
     if engine.dialect.name != "sqlite":
         return
-    novas = {"alertas": {"cultura": "VARCHAR", "chave": "VARCHAR"}}
+    novas = {
+        "alertas": {"cultura": "VARCHAR", "chave": "VARCHAR"},
+        "chat_interacoes": {"tela": "VARCHAR"},
+    }
     with engine.begin() as con:
         for tabela, colunas in novas.items():
             existentes = {linha[1] for linha in con.execute(text(f"PRAGMA table_info({tabela})"))}
+            if not existentes:  # tabela ainda não existe: o create_all a cria completa
+                continue
             for nome, tipo in colunas.items():
                 if nome not in existentes:
                     con.execute(text(f"ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}"))
@@ -1343,10 +1349,33 @@ class MensagemChat(BaseModel):
     texto: str = Field(max_length=4000)
 
 
+# Abas do front: o chat sabe onde o produtor está e interpreta perguntas vagas ("isso", "esse gráfico") a partir dela.
+TELAS = {
+    "clima": "Clima & IoT: leituras dos sensores (temperatura, umidade do ar e do solo), previsão de 7 dias, "
+             "condições de cada cultura e alertas da automação",
+    "plantios": "Plantios: talhões, fases das culturas, calendário de colheita e fichas técnicas",
+    "vendas": "Vendas: registro de vendas, lucro, margem, tendência de 30 dias e receita mensal por produto",
+    "comercial": "Dashboard Comercial: valor em estoque, capital em risco por validade, margens e ranking de produtos",
+    "estoque": "Gestão de Estoque: produtos, quantidades, custos, preços de venda e de mercado e validades",
+    "assistente": "Assistente IA: histórico das perguntas feitas ao chat e avaliações das respostas",
+}
+
+
 class ChatInput(BaseModel):
     produtor_id: int = 1
     mensagem: str = Field(min_length=1, max_length=2000)
     historico: List[MensagemChat] = []
+    tela: Optional[Literal[tuple(TELAS)]] = None  # aba aberta no front
+
+
+def instrucao_tela(tela: Optional[str]) -> str:
+    if not tela:
+        return ""
+    return (
+        f"\n\nTELA ATUAL: o produtor está na tela \"{TELAS[tela]}\". Se a pergunta for vaga ou se referir a algo "
+        "visível (\"isso\", \"aqui\", \"esse gráfico\", \"o que eu faço?\"), interprete a partir dessa tela e priorize "
+        "os dados dela. Se a pergunta for clara e sobre outro assunto, responda normalmente, sem citar a tela."
+    )
 
 
 # "Parametrização do sistema": regras de comportamento da IA
@@ -1537,9 +1566,12 @@ def conversar_com_assistente(payload: ChatInput, db: Session = Depends(get_db)):
     contents.append(types.Content(role="user", parts=[types.Part(text=payload.mensagem)]))
 
     inicio = _time.monotonic()
-    interacao = ChatInteracaoDB(produtor_id=payload.produtor_id, pergunta=payload.mensagem)
+    interacao = ChatInteracaoDB(produtor_id=payload.produtor_id, pergunta=payload.mensagem, tela=payload.tela)
     try:
-        texto, modelo = gerar_com_ia(contents, f"{SYSTEM_PROMPT}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}")
+        texto, modelo = gerar_com_ia(
+            contents,
+            f"{SYSTEM_PROMPT}{instrucao_tela(payload.tela)}\n\nDADOS ATUAIS DO PRODUTOR (JSON):\n{contexto}",
+        )
         interacao.resposta = texto or "Não consegui gerar uma resposta agora."
         interacao.modelo, interacao.sucesso = modelo, True
     except IAIndisponivel as e:
@@ -1571,6 +1603,7 @@ def interacao_para_dict(i: ChatInteracaoDB) -> dict:
         "duracao_ms": i.duracao_ms,
         "feedback": i.feedback,
         "comentario": i.comentario,
+        "tela": i.tela,
         "criado_em": marcar_como_utc(i.criado_em),
     }
 
@@ -1643,6 +1676,11 @@ def estatisticas_chat(produtor_id: int = 1, dias: int = 30, db: Session = Depend
         "satisfacao_percentual": round(positivas / (positivas + negativas) * 100, 1) if positivas + negativas else None,
         "tempo_medio_s": round(sum(i.duracao_ms for i in respondidas) / len(respondidas) / 1000, 1) if respondidas else None,
         "perguntas_por_dia": [{"data": d, "total": n} for d, n in por_dia.items()],
+        # De onde os produtores perguntam (aba aberta), da mais para a menos usada
+        "por_tela": sorted(
+            ({"tela": t, "total": sum(1 for i in itens if i.tela == t)} for t in {i.tela for i in itens}),
+            key=lambda x: (-x["total"], x["tela"] or ""),
+        ),
     }
 
 

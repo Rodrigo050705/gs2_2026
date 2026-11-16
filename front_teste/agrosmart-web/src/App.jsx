@@ -62,7 +62,7 @@ function App() {
 
       <TelaAtiva key={`${abaAtiva}-${versao}`} />
 
-      <ChatWidget />
+      <ChatWidget tela={abaAtiva} rotuloTela={ABAS.find((a) => a.id === abaAtiva).label} />
     </div>
   );
 }

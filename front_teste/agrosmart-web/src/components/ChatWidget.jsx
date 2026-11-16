@@ -20,14 +20,19 @@ const MD_COMPONENTS = {
 
 import { API_BASE_URL } from "../api";
 
-const SUGESTOES = [
-  "O que vou colher nas próximas 2 semanas?",
-  "Qual produto mais me dá lucro?",
-  "Qual o melhor momento para produzir morango?",
-  "Vou precisar irrigar esta semana?",
-];
+// Sugestões de acordo com a aba aberta (o backend também recebe a aba e interpreta "isso", "aqui" etc.)
+const SUGESTOES_POR_TELA = {
+  clima: ["Vou precisar irrigar esta semana?", "Tem risco de doença com esse clima?", "O que esses alertas significam?"],
+  plantios: ["O que vou colher nas próximas 2 semanas?", "Quando devo plantar morango?", "Qual talhão fica livre primeiro?"],
+  vendas: ["Qual produto mais me dá lucro?", "Por que o morango está caindo?", "Em que mês vendo mais?"],
+  comercial: ["Qual o meu capital em risco?", "Que preço devo ajustar?", "Qual produto tem a pior margem?"],
+  estoque: ["O que devo vender primeiro?", "Algum produto está abaixo do preço de mercado?", "Qual o melhor produto do meu estoque?"],
+  assistente: ["Como posso tirar mais proveito do assistente?", "Qual produto mais me dá lucro?", "Vou precisar irrigar esta semana?"],
+};
+const SUGESTOES_PADRAO = SUGESTOES_POR_TELA.estoque;
 
-export default function ChatWidget() {
+export default function ChatWidget({ tela, rotuloTela }) {
+  const sugestoes = SUGESTOES_POR_TELA[tela] || SUGESTOES_PADRAO;
   const [aberto, setAberto] = useState(false);
   const [mensagens, setMensagens] = useState([
     { papel: "model", texto: "Olá! Sou o assistente AgroSmart. Pergunte sobre seu estoque, vendas ou clima. 🌱" },
@@ -57,7 +62,7 @@ export default function ChatWidget() {
       const res = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ produtor_id: 1, mensagem: pergunta, historico }),
+        body: JSON.stringify({ produtor_id: 1, mensagem: pergunta, historico, tela }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Erro no servidor");
@@ -110,7 +115,9 @@ export default function ChatWidget() {
         <div className="fixed bottom-24 right-5 z-50 flex h-[32rem] w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="bg-emerald-800 px-4 py-3 text-white">
             <p className="font-semibold">Assistente AgroSmart</p>
-            <p className="text-xs text-emerald-100">Responde com base nos seus dados</p>
+            <p className="text-xs text-emerald-100">
+              Responde com base nos seus dados{rotuloTela ? ` · você está em ${rotuloTela}` : ""}
+            </p>
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-3">
@@ -192,7 +199,7 @@ export default function ChatWidget() {
 
             {mensagens.length === 1 && !carregando && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {SUGESTOES.map((s) => (
+                {sugestoes.map((s) => (
                   <button
                     key={s}
                     onClick={() => enviar(s)}

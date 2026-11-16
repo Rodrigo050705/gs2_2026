@@ -71,6 +71,34 @@ docker compose up --build
 
 Abre em http://localhost:8080. A chave da IA vem de `back/.env`.
 
+### Rodar localmente igual à produção
+
+Usa o [`deploy/prod/compose.yml`](../deploy/prod/compose.yml) sem alteração, mais o override
+[`deploy/local/compose.yml`](../deploy/local/compose.yml), que só troca o que depende do servidor:
+as imagens (locais, no lugar das do GHCR) e a pasta de segredos (`deploy/local/segredos`, fora do
+Git, no lugar de `/etc/docker/containers/agrosmart-prod/segredos`).
+
+```bash
+docker build -f back/Dockerfile -t agrosmart-api:local .
+```
+
+```bash
+docker build -t agrosmart-web:local front_teste/agrosmart-web
+```
+
+Crie o arquivo `deploy/local/segredos/GEMINI_API_KEY` só com a chave (sem quebra de linha) e suba:
+
+```bash
+docker compose -f deploy/prod/compose.yml -f deploy/local/compose.yml up
+```
+
+Abre em http://localhost:8093, com stack `agrosmart-prod`, volume, simulador e healthchecks iguais
+aos do servidor. Para parar e apagar o banco dessa stack:
+
+```bash
+docker compose -f deploy/prod/compose.yml -f deploy/local/compose.yml down -v
+```
+
 ## Configuração
 
 | Chave | Onde | O que é |

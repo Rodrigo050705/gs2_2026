@@ -7,6 +7,7 @@ import VendasDashboard from "./components/VendasDashboard";
 import PlantiosGestao from "./components/PlantiosGestao";
 import ChatWidget from "./components/ChatWidget";
 import ResumoDia from "./components/ResumoDia";
+import AssistenteInsights from "./components/AssistenteInsights";
 
 const ABAS = [
   { id: "clima", label: "Clima & IoT", Tela: ClimaDashboard },
@@ -14,6 +15,7 @@ const ABAS = [
   { id: "vendas", label: "Vendas", Tela: VendasDashboard },
   { id: "comercial", label: "Dashboard Comercial", Tela: ComercialDashboard },
   { id: "estoque", label: "Gestão de Estoque", Tela: EstoqueGestao },
+  { id: "assistente", label: "Assistente IA", Tela: AssistenteInsights },
 ];
 
 function App() {

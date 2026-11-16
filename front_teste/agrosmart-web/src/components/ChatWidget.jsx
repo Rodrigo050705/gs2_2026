@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 
 // Estilo dos elementos Markdown das respostas da IA (Tailwind zera listas/títulos por padrão)
 const MD_COMPONENTS = {
@@ -43,8 +44,11 @@ export default function ChatWidget() {
     const pergunta = (texto ?? entrada).trim();
     if (!pergunta || carregando) return;
 
-    // histórico sem a mensagem de boas-vindas
-    const historico = mensagens.slice(1);
+    // histórico sem a mensagem de boas-vindas e sem os avisos de erro
+    const historico = mensagens
+      .slice(1)
+      .filter((m) => !m.erro)
+      .map(({ papel, texto: t }) => ({ papel, texto: t }));
     setMensagens((m) => [...m, { papel: "user", texto: pergunta }]);
     setEntrada("");
     setCarregando(true);
@@ -57,7 +61,7 @@ export default function ChatWidget() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Erro no servidor");
-      setMensagens((m) => [...m, { papel: "model", texto: data.resposta }]);
+      setMensagens((m) => [...m, { papel: "model", texto: data.resposta, interacaoId: data.interacao_id }]);
     } catch (err) {
       setMensagens((m) => [
         ...m,
@@ -69,6 +73,24 @@ export default function ChatWidget() {
       ]);
     } finally {
       setCarregando(false);
+    }
+  }
+
+  const atualizarMensagem = (indice, campos) =>
+    setMensagens((lista) => lista.map((m, i) => (i === indice ? { ...m, ...campos } : m)));
+
+  // 👍/👎 numa resposta. No 👎 abre um campo opcional "o que faltou?".
+  async function avaliar(indice, nota, comentario) {
+    const m = mensagens[indice];
+    atualizarMensagem(indice, { feedback: nota, comentarioEnviado: comentario !== undefined });
+    try {
+      await fetch(`${API_BASE_URL}/chat/${m.interacaoId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nota, comentario }),
+      });
+    } catch {
+      /* avaliação é opcional: se falhar, não atrapalha a conversa */
     }
   }
 
@@ -93,7 +115,7 @@ export default function ChatWidget() {
 
           <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-3">
             {mensagens.map((m, i) => (
-              <div key={i} className={`flex ${m.papel === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex flex-col ${m.papel === "user" ? "items-end" : "items-start"}`}>
                 <div
                   className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                     m.papel === "user" ? "whitespace-pre-wrap" : ""
@@ -111,6 +133,52 @@ export default function ChatWidget() {
                     <ReactMarkdown components={MD_COMPONENTS}>{m.texto}</ReactMarkdown>
                   )}
                 </div>
+
+                {/* Avaliação da resposta */}
+                {m.interacaoId && (
+                  <div className="mt-1 ml-1 flex items-center gap-1 text-xs text-slate-400">
+                    {m.feedback ? (
+                      <span>{m.feedback === 1 ? "Obrigado pela avaliação!" : "Obrigado, vamos melhorar."}</span>
+                    ) : (
+                      <span>Esta resposta ajudou?</span>
+                    )}
+                    {[
+                      { nota: 1, Icone: ThumbsUp, cor: "text-emerald-600", rotulo: "Ajudou" },
+                      { nota: -1, Icone: ThumbsDown, cor: "text-red-500", rotulo: "Não ajudou" },
+                    ].map(({ nota, Icone, cor, rotulo }) => (
+                      <button
+                        key={nota}
+                        onClick={() => avaliar(i, nota)}
+                        aria-label={rotulo}
+                        title={rotulo}
+                        className={`rounded p-1 hover:bg-slate-200 ${m.feedback === nota ? cor : ""}`}
+                      >
+                        <Icone className="h-3.5 w-3.5" fill={m.feedback === nota ? "currentColor" : "none"} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {m.feedback === -1 && !m.comentarioEnviado && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      avaliar(i, -1, m.rascunho || "");
+                    }}
+                    className="mt-1 ml-1 flex w-[85%] gap-1"
+                  >
+                    <input
+                      autoFocus
+                      value={m.rascunho || ""}
+                      onChange={(e) => atualizarMensagem(i, { rascunho: e.target.value })}
+                      maxLength={500}
+                      placeholder="O que faltou? (opcional)"
+                      className="flex-1 rounded-lg border border-slate-300 px-2 py-1 text-xs outline-none focus:border-emerald-600"
+                    />
+                    <button type="submit" className="rounded-lg bg-slate-700 px-2 text-xs text-white">
+                      Enviar
+                    </button>
+                  </form>
+                )}
               </div>
             ))}
 

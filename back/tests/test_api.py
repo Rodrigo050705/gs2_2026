@@ -125,7 +125,8 @@ def test_chat_monta_contexto_com_os_dados_do_produtor(cliente, monkeypatch):
 
     resp = cliente.post("/api/v1/chat", json={"mensagem": "Qual o melhor produto?"})
     assert resp.status_code == 200
-    assert resp.json() == {"resposta": "**Cenoura**"}
+    assert resp.json()["resposta"] == "**Cenoura**"
+    assert isinstance(resp.json()["interacao_id"], int)
 
     contexto = falso.chamadas[0]["config"].system_instruction
     for chave in ("estoque_produtos", "resumo_ultimos_90_dias", "previsao_7_dias", "plantios_ativos",

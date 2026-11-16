@@ -60,8 +60,10 @@ class AlertaDB(Base):
     tipo = Column(String)        # Ex: "CLIMA", "SOLO", "ESTOQUE"
     severidade = Column(String)  # Ex: "ALTA", "MEDIA"
     mensagem = Column(String)
-    lido = Column(Boolean, default=False)
+    lido = Column(Boolean, default=False)          # True = resolvido pelo produtor
     criado_em = Column(DateTime, default=datetime.utcnow)
+    cultura = Column(String, nullable=True)        # Ex: "Alface"; None = alerta geral
+    chave = Column(String, nullable=True, index=True)  # Ex: "CLIMA:alface:calor" (evita repetição)
 
 
 class ProdutoDB(Base):
@@ -133,6 +135,23 @@ class PlantioDB(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def garantir_colunas_novas():
+    """O create_all cria tabelas novas, mas não acrescenta colunas em tabelas que já existem.
+    Acrescenta aqui as colunas que entraram depois (só mudanças aditivas), para bancos antigos."""
+    if engine.dialect.name != "sqlite":
+        return
+    novas = {"alertas": {"cultura": "VARCHAR", "chave": "VARCHAR"}}
+    with engine.begin() as con:
+        for tabela, colunas in novas.items():
+            existentes = {linha[1] for linha in con.execute(text(f"PRAGMA table_info({tabela})"))}
+            for nome, tipo in colunas.items():
+                if nome not in existentes:
+                    con.execute(text(f"ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}"))
+
+
+garantir_colunas_novas()
 
 
 def get_db():
@@ -376,6 +395,7 @@ class AlertaResponse(BaseModel):
     mensagem: str
     lido: bool
     criado_em: datetime
+    cultura: Optional[str] = None
 
     validar_criado_em_utc = field_validator("criado_em")(marcar_como_utc)
 
@@ -454,36 +474,114 @@ def enriquecer_produto(p: ProdutoDB) -> dict:
 
 
 # ==========================================
-# 4. MOTOR DE AUTOMAÇÃO (Regras Climáticas)
+# 4. MOTOR DE AUTOMAÇÃO (Regras por cultura, a partir das fichas técnicas)
 # ==========================================
+# Alerta = condição CRÍTICA. Desvios só da faixa ideal aparecem no painel "Condições por cultura"
+# (/culturas/{nome}/condicoes) e não viram alerta, para não gerar ruído.
+JANELA_ALERTA_REPETIDO = timedelta(hours=6)  # mesma condição não gera outro alerta nesse intervalo
+MARGEM_SOLO_CRITICO = 10       # pontos abaixo do mínimo ideal da ficha → solo crítico
+MARGEM_SOLO_ENCHARCADO = 15    # pontos acima do máximo ideal da ficha → risco de encharcamento
+# Sem plantios com ficha técnica, valem os limites genéricos de antes.
+LIMITES_GENERICOS = {"temperatura_max": 32.0, "umidade_solo_min": 30.0}
+
+
+def culturas_monitoradas(db: Session, produtor_id: int) -> dict:
+    """Culturas com plantio em andamento e ficha técnica: {chave: {"ficha": ..., "talhoes": [...]}}."""
+    fichas = carregar_fichas()
+    resultado: dict = {}
+    plantios = (
+        db.query(PlantioDB)
+        .filter(PlantioDB.produtor_id == produtor_id, PlantioDB.status == "Em andamento")
+        .all()
+    )
+    for p in plantios:
+        chave = chave_cultura(p.cultura)
+        if chave in fichas:
+            resultado.setdefault(chave, {"ficha": fichas[chave], "talhoes": []})["talhoes"].append(p.talhao)
+    return resultado
+
+
+def limites_criticos(culturas: dict) -> dict:
+    """Limites mais restritivos entre as culturas monitoradas (usados no gráfico e nos cards do front)."""
+    if not culturas:
+        return {
+            "fonte": "genérico",
+            "culturas": [],
+            "temperatura_max_critica": LIMITES_GENERICOS["temperatura_max"],
+            "temperatura_min_critica": None,
+            "umidade_solo_minima_critica": LIMITES_GENERICOS["umidade_solo_min"],
+        }
+    fichas = [c["ficha"] for c in culturas.values()]
+    return {
+        "fonte": "fichas técnicas",
+        "culturas": sorted(f["nome"] for f in fichas),
+        "temperatura_max_critica": min(f["temperatura_critica_c"]["max"] for f in fichas),
+        "temperatura_min_critica": max(f["temperatura_critica_c"]["min"] for f in fichas),
+        "umidade_solo_minima_critica": max(f["umidade_solo_ideal_percentual"]["min"] for f in fichas) - MARGEM_SOLO_CRITICO,
+    }
+
+
+def condicoes_criticas(leitura: TelemetriaInput, culturas: dict) -> List[dict]:
+    """Lista as condições críticas da leitura, por cultura (ou gerais, sem culturas monitoradas)."""
+    t, u = leitura.temperatura_ar, leitura.umidade_solo
+    achados = []
+
+    if not culturas:
+        if t > LIMITES_GENERICOS["temperatura_max"]:
+            achados.append({"chave": "CLIMA:geral:calor", "tipo": "CLIMA", "severidade": "ALTA", "cultura": None,
+                            "mensagem": f"Calor extremo ({t} °C) no sensor {leitura.sensor_id}. Risco de estresse térmico nas culturas."})
+        if u < LIMITES_GENERICOS["umidade_solo_min"]:
+            achados.append({"chave": "SOLO:geral:seco", "tipo": "SOLO", "severidade": "ALTA", "cultura": None,
+                            "mensagem": f"Umidade do solo crítica ({u}%) no sensor {leitura.sensor_id}. Acionar irrigação imediatamente."})
+        return achados
+
+    for chave, info in culturas.items():
+        ficha = info["ficha"]
+        nome, talhoes = ficha["nome"], ", ".join(info["talhoes"])
+        t_crit, u_ideal = ficha["temperatura_critica_c"], ficha["umidade_solo_ideal_percentual"]
+        obs = f" {t_crit['obs']}" if t_crit.get("obs") else ""
+
+        if t > t_crit["max"]:
+            achados.append({"chave": f"CLIMA:{chave}:calor", "tipo": "CLIMA", "severidade": "ALTA", "cultura": nome,
+                            "mensagem": f"{nome} ({talhoes}): {t} °C, acima do limite crítico de {t_crit['max']} °C.{obs}"})
+        elif t < t_crit["min"]:
+            achados.append({"chave": f"CLIMA:{chave}:frio", "tipo": "CLIMA", "severidade": "ALTA", "cultura": nome,
+                            "mensagem": f"{nome} ({talhoes}): {t} °C, abaixo do limite crítico de {t_crit['min']} °C.{obs}"})
+
+        if u < u_ideal["min"] - MARGEM_SOLO_CRITICO:
+            achados.append({"chave": f"SOLO:{chave}:seco", "tipo": "SOLO", "severidade": "ALTA", "cultura": nome,
+                            "mensagem": f"{nome} ({talhoes}): umidade do solo em {u}%, muito abaixo do ideal "
+                                        f"({u_ideal['min']}–{u_ideal['max']}%). Acionar a irrigação."})
+        elif u > u_ideal["max"] + MARGEM_SOLO_ENCHARCADO:
+            achados.append({"chave": f"SOLO:{chave}:encharcado", "tipo": "SOLO", "severidade": "MEDIA", "cultura": nome,
+                            "mensagem": f"{nome} ({talhoes}): umidade do solo em {u}%, bem acima do ideal "
+                                        f"({u_ideal['min']}–{u_ideal['max']}%). Risco de encharcamento: suspender a irrigação."})
+    return achados
+
+
 def avaliar_regras_automacao(db: Session, leitura: TelemetriaInput):
-    alertas_gerados = []
+    """Gera alertas para as condições críticas da leitura, sem repetir a mesma condição na janela."""
+    achados = condicoes_criticas(leitura, culturas_monitoradas(db, leitura.produtor_id))
+    if not achados:
+        return 0
 
-    if leitura.temperatura_ar > 32.0:
-        alertas_gerados.append(
-            AlertaDB(
-                produtor_id=leitura.produtor_id,
-                tipo="CLIMA",
-                severidade="ALTA",
-                mensagem=f"Alerta de Calor Extremo ({leitura.temperatura_ar}°C) no sensor {leitura.sensor_id}. Risco de estresse térmico nas culturas.",
-            )
-        )
-
-    if leitura.umidade_solo < 30.0:
-        alertas_gerados.append(
-            AlertaDB(
-                produtor_id=leitura.produtor_id,
-                tipo="SOLO",
-                severidade="ALTA",
-                mensagem=f"Umidade do solo crítica ({leitura.umidade_solo}%) em {leitura.sensor_id}. Acionar irrigação imediatamente.",
-            )
-        )
-
-    if alertas_gerados:
-        db.add_all(alertas_gerados)
+    desde = datetime.utcnow() - JANELA_ALERTA_REPETIDO
+    recentes = {
+        chave
+        for (chave,) in db.query(AlertaDB.chave)
+        .filter(AlertaDB.produtor_id == leitura.produtor_id, AlertaDB.criado_em >= desde, AlertaDB.chave.isnot(None))
+        .all()
+    }
+    novos = [
+        AlertaDB(produtor_id=leitura.produtor_id, tipo=a["tipo"], severidade=a["severidade"],
+                 mensagem=a["mensagem"], cultura=a["cultura"], chave=a["chave"])
+        for a in achados
+        if a["chave"] not in recentes
+    ]
+    if novos:
+        db.add_all(novos)
         db.commit()
-
-    return len(alertas_gerados)
+    return len(novos)
 
 
 # ==========================================
@@ -536,14 +634,44 @@ def listar_telemetria(limite: int = 20, produtor_id: int = 1, db: Session = Depe
 
 
 @app.get("/api/v1/alertas", response_model=List[AlertaResponse])
-def listar_alertas(produtor_id: int = 1, db: Session = Depends(get_db)):
-    return (
+def listar_alertas(
+    produtor_id: int = 1,
+    apenas_pendentes: bool = False,
+    limite: int = 10,
+    db: Session = Depends(get_db),
+):
+    query = db.query(AlertaDB).filter(AlertaDB.produtor_id == produtor_id)
+    if apenas_pendentes:
+        query = query.filter(AlertaDB.lido.is_(False))
+    return query.order_by(AlertaDB.criado_em.desc(), AlertaDB.id.desc()).limit(limite).all()
+
+
+@app.put("/api/v1/alertas/{alerta_id}/resolver", response_model=AlertaResponse)
+def resolver_alerta(alerta_id: int, db: Session = Depends(get_db)):
+    alerta = db.query(AlertaDB).filter(AlertaDB.id == alerta_id).first()
+    if not alerta:
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
+    alerta.lido = True
+    db.commit()
+    db.refresh(alerta)
+    return alerta
+
+
+@app.post("/api/v1/alertas/resolver-todos")
+def resolver_todos_alertas(produtor_id: int = 1, db: Session = Depends(get_db)):
+    total = (
         db.query(AlertaDB)
-        .filter(AlertaDB.produtor_id == produtor_id)
-        .order_by(AlertaDB.criado_em.desc())
-        .limit(10)
-        .all()
+        .filter(AlertaDB.produtor_id == produtor_id, AlertaDB.lido.is_(False))
+        .update({AlertaDB.lido: True})
     )
+    db.commit()
+    return {"resolvidos": total}
+
+
+@app.get("/api/v1/automacao/limites")
+def obter_limites_automacao(produtor_id: int = 1, db: Session = Depends(get_db)):
+    """Limites críticos mais restritivos das culturas plantadas (os mesmos que geram os alertas)."""
+    return limites_criticos(culturas_monitoradas(db, produtor_id))
 
 
 # --- ENDPOINTS CRUD DE ESTOQUE ---
@@ -1255,7 +1383,7 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
 
     alertas = (
         db.query(AlertaDB)
-        .filter(AlertaDB.produtor_id == produtor_id)
+        .filter(AlertaDB.produtor_id == produtor_id, AlertaDB.lido.is_(False))  # só os pendentes
         .order_by(AlertaDB.criado_em.desc())
         .limit(10)
         .all()
@@ -1288,11 +1416,12 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
     fichas = {k: fichas_todas[k] for k in dict.fromkeys(chave_cultura(n) for n in nomes_culturas) if k in fichas_todas}
     ultima_leitura = leituras[0] if leituras else None
     previsao_dict = previsao if isinstance(previsao, dict) else None
-    alertas_agronomicos = {
-        ficha["nome"]: alertas
-        for ficha in fichas.values()
-        if (alertas := avaliar_condicoes(ficha, ultima_leitura, previsao_dict))
-    }
+    # Sem ":=" aqui: numa compreensão ele vaza para a função e sobrescreveria a variável "alertas".
+    alertas_agronomicos = {}
+    for ficha in fichas.values():
+        desvios = avaliar_condicoes(ficha, ultima_leitura, previsao_dict)
+        if desvios:
+            alertas_agronomicos[ficha["nome"]] = desvios
 
     contexto = {
         "agora_horario_local": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -1323,10 +1452,11 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
             "receita_mensal": receita_mensal(db, produtor_id, 6),
         },
         "clima_sensores": clima or "sem leituras de sensores ainda",
-        "alertas_recentes": [
-            {"tipo": a.tipo, "severidade": a.severidade, "mensagem": a.mensagem, "horario_local": utc_para_local(a.criado_em)}
+        "alertas_pendentes": [
+            {"tipo": a.tipo, "severidade": a.severidade, "cultura": a.cultura, "mensagem": a.mensagem,
+             "horario_local": utc_para_local(a.criado_em)}
             for a in alertas
-        ],
+        ] or "nenhum alerta crítico pendente",
     }
     return json.dumps(contexto, default=str, ensure_ascii=False)
 

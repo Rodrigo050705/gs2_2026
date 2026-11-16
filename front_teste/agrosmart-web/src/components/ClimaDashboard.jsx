@@ -17,14 +17,37 @@ import {
   AlertTriangle,
   RefreshCw,
   Filter,
+  CheckCircle2,
+  Check,
 } from "lucide-react";
 import PrevisaoTempo from "./PrevisaoTempo";
 
 import { API_BASE_URL } from "../api";
 
+// Usados até a API responder (e se não houver culturas com ficha técnica plantadas).
+const LIMITES_PADRAO = {
+  fonte: "genérico",
+  culturas: [],
+  temperatura_max_critica: 32,
+  temperatura_min_critica: null,
+  umidade_solo_minima_critica: 30,
+};
+
+// Leitura crítica = fora dos limites críticos das culturas plantadas (os mesmos dos alertas)
+const ehCalorCritico = (t, limites) =>
+  t > limites.temperatura_max_critica ||
+  (limites.temperatura_min_critica !== null && t < limites.temperatura_min_critica);
+const ehSoloCritico = (u, limites) => u < limites.umidade_solo_minima_critica;
+
+const ESTILO_SEVERIDADE = {
+  ALTA: { caixa: "bg-red-50 border-red-200", etiqueta: "bg-red-600", texto: "text-red-900" },
+  MEDIA: { caixa: "bg-amber-50 border-amber-200", etiqueta: "bg-amber-500", texto: "text-amber-900" },
+};
+
 export default function ClimaDashboard() {
   const [telemetria, setTelemetria] = useState([]);
   const [alertas, setAlertas] = useState([]);
+  const [limites, setLimites] = useState(LIMITES_PADRAO);
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState(null);
   const [erroConexao, setErroConexao] = useState(false);
 
@@ -35,19 +58,20 @@ export default function ClimaDashboard() {
 
   const carregarDados = async () => {
     try {
-      const [resTel, resAlertas] = await Promise.all([
+      const [resTel, resAlertas, resLimites] = await Promise.all([
         fetch(`${API_BASE_URL}/telemetria?limite=${limiteLeituras}&produtor_id=1`),
-        fetch(`${API_BASE_URL}/alertas?produtor_id=1`),
+        fetch(`${API_BASE_URL}/alertas?produtor_id=1&apenas_pendentes=true`),
+        fetch(`${API_BASE_URL}/automacao/limites?produtor_id=1`),
       ]);
 
       if (!resTel.ok || !resAlertas.ok) throw new Error("Erro na resposta da API");
 
       const dadosTel = await resTel.json();
       const dadosAlertas = await resAlertas.json();
+      if (resLimites.ok) setLimites(await resLimites.json());
 
       const dadosFormatados = dadosTel.map((item) => ({
         ...item,
-        isCritico: item.temperatura_ar > 32 || item.umidade_solo < 30,
         horaFormatada: new Date(item.timestamp).toLocaleTimeString("pt-BR", {
           hour: "2-digit",
           minute: "2-digit",
@@ -78,15 +102,34 @@ export default function ClimaDashboard() {
     return unicos.length > 0 ? unicos : ["estacao-campo-01"];
   }, [telemetria]);
 
+  const calorCritico = (t) => ehCalorCritico(t, limites);
+  const soloCritico = (u) => ehSoloCritico(u, limites);
+
   // Aplica os filtros instantâneos de Sensor e Condição Crítica
   const dadosFiltrados = useMemo(() => {
     return telemetria.filter((item) => {
       const passaSensor =
         sensorSelecionado === "TODOS" || item.sensor_id === sensorSelecionado;
-      const passaCritico = !apenasCriticos || item.isCritico;
+      const passaCritico =
+        !apenasCriticos ||
+        ehCalorCritico(item.temperatura_ar, limites) ||
+        ehSoloCritico(item.umidade_solo, limites);
       return passaSensor && passaCritico;
     });
-  }, [telemetria, sensorSelecionado, apenasCriticos]);
+  }, [telemetria, sensorSelecionado, apenasCriticos, limites]);
+
+  const resolverAlerta = async (id) => {
+    await fetch(`${API_BASE_URL}/alertas/${id}/resolver`, { method: "PUT" });
+    setAlertas((atual) => atual.filter((a) => a.id !== id));
+  };
+
+  const resolverTodos = async () => {
+    await fetch(`${API_BASE_URL}/alertas/resolver-todos?produtor_id=1`, { method: "POST" });
+    setAlertas([]);
+  };
+
+  const descricaoLimites =
+    limites.culturas.length > 0 ? `limite das culturas plantadas (${limites.culturas.join(", ")})` : "limite genérico";
 
   // KPIs baseados na última leitura do conjunto filtrado (ou geral)
   const leituraAtual =
@@ -182,12 +225,15 @@ export default function ClimaDashboard() {
             <p className="text-sm font-medium text-slate-500">Temperatura do Ar</p>
             <p
               className={`text-3xl font-bold mt-1 ${
-                leituraAtual?.temperatura_ar > 32 ? "text-red-600" : "text-slate-800"
+                leituraAtual && calorCritico(leituraAtual.temperatura_ar) ? "text-red-600" : "text-slate-800"
               }`}
             >
               {leituraAtual ? `${leituraAtual.temperatura_ar}°C` : "--"}
             </p>
-            <p className="text-xs text-slate-400 mt-1">Limite ideal: até 32°C</p>
+            <p className="text-xs text-slate-400 mt-1" title={descricaoLimites}>
+              Crítico acima de {limites.temperatura_max_critica}°C
+              {limites.temperatura_min_critica !== null && ` ou abaixo de ${limites.temperatura_min_critica}°C`}
+            </p>
           </div>
           <div className="p-3 bg-orange-50 text-orange-600 rounded-lg">
             <Thermometer className="w-7 h-7" />
@@ -212,12 +258,14 @@ export default function ClimaDashboard() {
             <p className="text-sm font-medium text-slate-500">Umidade do Solo</p>
             <p
               className={`text-3xl font-bold mt-1 ${
-                leituraAtual?.umidade_solo < 30 ? "text-red-600" : "text-emerald-700"
+                leituraAtual && soloCritico(leituraAtual.umidade_solo) ? "text-red-600" : "text-emerald-700"
               }`}
             >
               {leituraAtual ? `${leituraAtual.umidade_solo}%` : "--"}
             </p>
-            <p className="text-xs text-slate-400 mt-1">Mínimo recomendado: 30%</p>
+            <p className="text-xs text-slate-400 mt-1" title={descricaoLimites}>
+              Crítico abaixo de {limites.umidade_solo_minima_critica}%
+            </p>
           </div>
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
             <Sprout className="w-7 h-7" />
@@ -267,16 +315,16 @@ export default function ClimaDashboard() {
                 <Legend />
                 {/* Linhas de referência visual dos limiares críticos */}
                 <ReferenceLine
-                  y={32}
+                  y={limites.temperatura_max_critica}
                   stroke="#ef4444"
                   strokeDasharray="4 4"
-                  label={{ value: "Máx Temp (32°C)", fill: "#ef4444", fontSize: 10 }}
+                  label={{ value: `Máx Temp (${limites.temperatura_max_critica}°C)`, fill: "#ef4444", fontSize: 10 }}
                 />
                 <ReferenceLine
-                  y={30}
+                  y={limites.umidade_solo_minima_critica}
                   stroke="#10b981"
                   strokeDasharray="4 4"
-                  label={{ value: "Mín Solo (30%)", fill: "#059669", fontSize: 10 }}
+                  label={{ value: `Mín Solo (${limites.umidade_solo_minima_critica}%)`, fill: "#059669", fontSize: 10 }}
                 />
                 <Line
                   type="monotone"
@@ -313,39 +361,74 @@ export default function ClimaDashboard() {
 
       {/* Feed de Alertas Automáticos */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-2 mb-4">
-          <AlertTriangle className="w-5 h-5 text-amber-500" />
-          <h2 className="text-lg font-semibold text-slate-800">
-            Alertas Disparados pela Automação
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-semibold text-slate-800">
+              Alertas Disparados pela Automação
+            </h2>
+            {alertas.length > 0 && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-600 text-white">
+                {alertas.length}
+              </span>
+            )}
+          </div>
+          {alertas.length > 1 && (
+            <button
+              onClick={resolverTodos}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+            >
+              Resolver todos
+            </button>
+          )}
         </div>
+        <p className="text-xs text-slate-500 mb-4">
+          Condições críticas pelas fichas técnicas das culturas plantadas. A mesma condição não se repete por 6 horas.
+        </p>
 
         {alertas.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Nenhum alerta crítico registrado. Condições climáticas dentro dos parâmetros ideais.
-          </p>
+          <div className="flex items-start gap-2 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5">
+            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              Nenhum alerta crítico pendente. Desvios da faixa <em>ideal</em> de cada cultura aparecem em
+              "Condições por cultura", acima.
+            </span>
+          </div>
         ) : (
           <div className="space-y-3">
-            {alertas.map((alerta) => (
-              <div
-                key={alerta.id}
-                className="flex items-start justify-between p-3.5 rounded-lg bg-red-50 border border-red-200"
-              >
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase px-2 py-0.5 rounded bg-red-600 text-white">
-                      {alerta.tipo} • {alerta.severidade}
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      {new Date(alerta.criado_em).toLocaleString("pt-BR")}
-                    </span>
+            {alertas.map((alerta) => {
+              const estilo = ESTILO_SEVERIDADE[alerta.severidade] || ESTILO_SEVERIDADE.ALTA;
+              return (
+                <div
+                  key={alerta.id}
+                  className={`flex items-start justify-between gap-3 p-3.5 rounded-lg border ${estilo.caixa}`}
+                >
+                  <div className="space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded text-white ${estilo.etiqueta}`}>
+                        {alerta.tipo} • {alerta.severidade}
+                      </span>
+                      {alerta.cultura && (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700">
+                          {alerta.cultura}
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-500">
+                        {new Date(alerta.criado_em).toLocaleString("pt-BR")}
+                      </span>
+                    </div>
+                    <p className={`text-sm font-medium pt-1 ${estilo.texto}`}>{alerta.mensagem}</p>
                   </div>
-                  <p className="text-sm font-medium text-red-900 pt-1">
-                    {alerta.mensagem}
-                  </p>
+                  <button
+                    onClick={() => resolverAlerta(alerta.id)}
+                    title="Marcar como resolvido"
+                    className="shrink-0 flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                  >
+                    <Check className="w-3.5 h-3.5 text-emerald-600" /> Resolver
+                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

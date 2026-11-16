@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 dist/
 *.db-journal
+deploy/local/segredos/

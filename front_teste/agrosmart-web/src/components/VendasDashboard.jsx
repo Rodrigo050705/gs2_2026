@@ -19,7 +19,7 @@ import {
   Filter,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+import { API_BASE_URL } from "../api";
 const CANAIS = ["Feira", "Mercado local", "CEASA", "Delivery", "Outro"];
 const CORES_PRODUTOS = ["#059669", "#ea580c", "#2563eb", "#d97706", "#7c3aed", "#db2777", "#0891b2"];
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];

@@ -1,0 +1,4 @@
+# Dependências só de desenvolvimento/CI (testes). A imagem usa apenas o requirements.txt.
+-r requirements.txt
+pytest
+httpx

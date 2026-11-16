@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+import { API_BASE_URL } from "../api";
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const DIA_MS = 24 * 60 * 60 * 1000;
 

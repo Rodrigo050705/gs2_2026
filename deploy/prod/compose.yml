@@ -1,0 +1,44 @@
+name: agrosmart-prod
+
+# Produção do AgroSmart, acompanhada pelo Portainer (stack de Git, polling). Ver docs/cicd.md.
+
+services:
+  api:
+    # Trocada por PR do CI (tag vX.Y.Z). O merge do PR é a aprovação.
+    # Antes da primeira versão, use aqui uma imagem sha-… que já esteja na homologação.
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite:////data/agrosmart.db
+    volumes:
+      - dados:/data
+      - /etc/docker/containers/agrosmart-prod/segredos:/run/secrets:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  simulador:
+    # Dados de sensores de demonstração. Remova quando houver sensores reais enviando telemetria.
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
+    restart: unless-stopped
+    command: ["python", "/app/iot-simulator/iot_simulator.py", "--url", "http://api:8000/api/v1/telemetria"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  web:
+    image: ghcr.io/rodrigo050705/agrosmart-web:sha-0000000
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8093:80"
+
+volumes:
+  dados:

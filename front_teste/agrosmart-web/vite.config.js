@@ -7,4 +7,10 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
+  server: {
+    // O front chama /api/v1 (relativo); em dev isso vai para a API local.
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
+  },
 })

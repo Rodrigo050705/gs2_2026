@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Ruler,
   Plus,
-  RefreshCw,
   BookOpen,
   CheckCircle2,
   XCircle,
@@ -367,13 +366,11 @@ export default function PlantiosGestao() {
           <h1 className="text-2xl font-bold text-slate-800">Plantios & Calendário de Colheita</h1>
           <p className="text-sm text-slate-500">Talhões, fases das culturas e janelas de colheita previstas</p>
         </div>
-        <button
-          onClick={carregarDados}
-          className="flex items-center gap-2 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 px-3 py-2 rounded-lg border shadow-sm transition-colors self-start"
-        >
-          <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
-          <span>{erroConexao ? "Erro de conexão" : "Atualizar Dados"}</span>
-        </button>
+        {erroConexao && (
+          <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 self-start">
+            Sem conexão com a API
+          </span>
+        )}
       </div>
 
       {/* KPIs */}

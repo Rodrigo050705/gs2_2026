@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { RefreshCw } from "lucide-react";
 import ClimaDashboard from "./components/ClimaDashboard";
 import ComercialDashboard from "./components/ComercialDashboard";
 import EstoqueGestao from "./components/EstoqueGestao";
@@ -16,13 +17,22 @@ const ABAS = [
 
 function App() {
   const [abaAtiva, setAbaAtiva] = useState("estoque");
+  // Incrementar a versão remonta a tela ativa, que busca os dados de novo
+  const [versao, setVersao] = useState(0);
+  const [girando, setGirando] = useState(false);
   const TelaAtiva = ABAS.find((a) => a.id === abaAtiva).Tela;
+
+  const atualizar = () => {
+    setVersao((v) => v + 1);
+    setGirando(true);
+    setTimeout(() => setGirando(false), 700);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-emerald-800 text-white px-6 py-3 flex flex-wrap items-center justify-between gap-2 shadow">
         <span className="font-bold tracking-wide">AgroSmart MVP</span>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {ABAS.map((aba) => (
             <button
               key={aba.id}
@@ -34,10 +44,18 @@ function App() {
               {aba.label}
             </button>
           ))}
+          <button
+            onClick={atualizar}
+            title="Atualizar dados da aba"
+            aria-label="Atualizar dados da aba"
+            className="ml-1 p-2 rounded-lg bg-emerald-700/60 hover:bg-emerald-700 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${girando ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </nav>
 
-      <TelaAtiva />
+      <TelaAtiva key={`${abaAtiva}-${versao}`} />
 
       <ChatWidget />
     </div>

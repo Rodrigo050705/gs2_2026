@@ -23,7 +23,7 @@ const SUGESTOES = [
   "Qual o melhor produto do meu estoque?",
   "Qual produto mais me dá lucro?",
   "Qual o melhor momento para produzir morango?",
-  "Como está o clima da lavoura agora?",
+  "Vou precisar irrigar esta semana?",
 ];
 
 export default function ChatWidget() {

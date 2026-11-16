@@ -1,0 +1,92 @@
+{
+  "_sobre": {
+    "descricao": "Ficha técnica de referência das culturas, usada pela IA como fonte dos números agronômicos.",
+    "fonte": "Valores aproximados compilados de referências gerais (Embrapa Hortaliças, manuais técnicos de olericultura) para o MVP. Validar com um agrônomo antes de uso em produção.",
+    "regiao_referencia": "Sudeste do Brasil (ex.: Atibaia-SP, ~800 m de altitude)",
+    "umidade_solo": "Faixas em % volumétrica, na mesma escala dos sensores do simulador. Referência aproximada para solo argiloso."
+  },
+  "tomate": {
+    "nome": "Tomate",
+    "ciclo_dias": { "min": 100, "max": 120, "obs": "Da semeadura ao início da colheita; colheita se estende por 30 a 60 dias (tomate de mesa)." },
+    "temperatura_ideal_c": { "min": 20, "max": 26 },
+    "temperatura_critica_c": { "min": 10, "max": 32, "obs": "Acima de 32 °C há abortamento de flores e falha de pegamento; abaixo de 10 °C o crescimento para." },
+    "umidade_solo_ideal_percentual": { "min": 40, "max": 60 },
+    "necessidade_hidrica_mm_semana": { "min": 25, "max": 40 },
+    "epoca_plantio_regiao": "Agosto a fevereiro (evitar plantio que leve a colheita no auge das chuvas de janeiro sem cultivo protegido).",
+    "meses_plantio": [8, 9, 10, 11, 12, 1, 2],
+    "colheita": "Colher no estádio 'pintado' (início de mudança de cor) para mercado distante; maduro para venda direta. Evitar colher com fruto molhado.",
+    "conservacao_pos_colheita_dias": { "ambiente": 7, "refrigerado": 14 },
+    "riscos_climaticos": [
+      { "condicao": "Temperatura entre 15 e 22 °C com umidade do ar acima de 90% ou chuva contínua", "risco": "Requeima (Phytophthora infestans)" },
+      { "condicao": "Calor acima de 28 °C com solo encharcado", "risco": "Murcha bacteriana" },
+      { "condicao": "Tempo quente e seco", "risco": "Ataque de traça-do-tomateiro e ácaros" }
+    ]
+  },
+  "alface": {
+    "nome": "Alface",
+    "ciclo_dias": { "min": 45, "max": 60, "obs": "Do transplante da muda à colheita; colheita em janela curta (cerca de 7 a 10 dias)." },
+    "temperatura_ideal_c": { "min": 15, "max": 24 },
+    "temperatura_critica_c": { "min": 7, "max": 30, "obs": "Acima de 30 °C ocorre pendoamento precoce (folhas amargas); usar variedades de verão." },
+    "umidade_solo_ideal_percentual": { "min": 45, "max": 65 },
+    "necessidade_hidrica_mm_semana": { "min": 20, "max": 30 },
+    "epoca_plantio_regiao": "Ano todo; no verão usar variedades resistentes ao pendoamento. Plantio escalonado a cada 2 a 3 semanas garante oferta contínua.",
+    "meses_plantio": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "colheita": "Colher pela manhã, com cabeça bem formada e antes do pendoamento.",
+    "conservacao_pos_colheita_dias": { "ambiente": 2, "refrigerado": 7 },
+    "riscos_climaticos": [
+      { "condicao": "Temperatura acima de 28 a 30 °C por vários dias", "risco": "Pendoamento precoce e queima de bordas" },
+      { "condicao": "Umidade alta e temperaturas amenas (15 a 20 °C)", "risco": "Míldio" },
+      { "condicao": "Chuva forte", "risco": "Danos às folhas e podridões" }
+    ]
+  },
+  "morango": {
+    "nome": "Morango",
+    "ciclo_dias": { "min": 60, "max": 80, "obs": "Do plantio das mudas à primeira colheita; a colheita se estende por 5 a 6 meses." },
+    "temperatura_ideal_c": { "min": 13, "max": 26 },
+    "temperatura_critica_c": { "min": 2, "max": 30, "obs": "Calor acima de 30 °C reduz a florada e o tamanho dos frutos; geada danifica flores." },
+    "umidade_solo_ideal_percentual": { "min": 40, "max": 60 },
+    "necessidade_hidrica_mm_semana": { "min": 20, "max": 35 },
+    "epoca_plantio_regiao": "Março a maio, com colheita de junho a dezembro (pico de agosto a outubro).",
+    "meses_plantio": [3, 4, 5],
+    "colheita": "Colher a cada 2 ou 3 dias, com 3/4 do fruto vermelho, nas horas mais frescas. Fruto muito perecível.",
+    "conservacao_pos_colheita_dias": { "ambiente": 2, "refrigerado": 6 },
+    "riscos_climaticos": [
+      { "condicao": "Chuva ou umidade alta na florada/frutificação", "risco": "Mofo cinzento (Botrytis) nos frutos" },
+      { "condicao": "Tempo quente e seco", "risco": "Ácaro-rajado" },
+      { "condicao": "Chuva na colheita", "risco": "Frutos amolecidos e perda de qualidade" }
+    ]
+  },
+  "cenoura": {
+    "nome": "Cenoura",
+    "ciclo_dias": { "min": 90, "max": 110, "obs": "Semeadura direta; colheita em janela de cerca de 2 semanas." },
+    "temperatura_ideal_c": { "min": 16, "max": 22 },
+    "temperatura_critica_c": { "min": 5, "max": 30, "obs": "Variedades do grupo Nantes são de inverno; no verão preferir o grupo Brasília." },
+    "umidade_solo_ideal_percentual": { "min": 40, "max": 60 },
+    "necessidade_hidrica_mm_semana": { "min": 20, "max": 30 },
+    "epoca_plantio_regiao": "Grupo Nantes: março a julho. Grupo Brasília (verão): setembro a fevereiro.",
+    "meses_plantio": [3, 4, 5, 6, 7],
+    "colheita": "Colher quando as folhas inferiores começam a amarelar; solo levemente úmido facilita o arranquio.",
+    "conservacao_pos_colheita_dias": { "ambiente": 7, "refrigerado": 30 },
+    "riscos_climaticos": [
+      { "condicao": "Calor com umidade alta", "risco": "Queima-das-folhas (Alternaria)" },
+      { "condicao": "Variação forte de umidade do solo", "risco": "Raízes rachadas" }
+    ]
+  },
+  "feijao": {
+    "nome": "Feijão",
+    "ciclo_dias": { "min": 85, "max": 95, "obs": "Feijão carioca; colheita concentrada em cerca de 10 dias." },
+    "temperatura_ideal_c": { "min": 18, "max": 30 },
+    "temperatura_critica_c": { "min": 12, "max": 35, "obs": "Acima de 35 °C na floração há queda de flores e vagens." },
+    "umidade_solo_ideal_percentual": { "min": 35, "max": 55 },
+    "necessidade_hidrica_mm_semana": { "min": 20, "max": 35 },
+    "epoca_plantio_regiao": "Safra das águas: agosto a novembro. Safra da seca: janeiro a março. Inverno (irrigado): maio a junho.",
+    "meses_plantio": [8, 9, 10, 11, 1, 2, 3, 5, 6],
+    "colheita": "Colher com vagens secas; chuva na colheita causa germinação e manchas nos grãos.",
+    "conservacao_pos_colheita_dias": { "ambiente": 180, "refrigerado": 365 },
+    "riscos_climaticos": [
+      { "condicao": "Chuva na maturação/colheita", "risco": "Grãos manchados e germinação na vagem" },
+      { "condicao": "Temperatura acima de 35 °C na floração", "risco": "Abortamento de flores" },
+      { "condicao": "Umidade alta e temperaturas amenas", "risco": "Antracnose" }
+    ]
+  }
+}

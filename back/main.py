@@ -1,4 +1,7 @@
+import json
 import time as _time
+import unicodedata
+from pathlib import Path
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Literal, Optional
 import requests
@@ -1040,14 +1043,93 @@ def calendario_colheitas(produtor_id: int = 1, dias: int = 60, db: Session = Dep
     )
 
 
+# --- FICHA TÉCNICA DAS CULTURAS ---
+ARQUIVO_CULTURAS = Path(__file__).resolve().parent / "dados" / "culturas.json"
+
+
+def carregar_fichas() -> dict:
+    """Lê back/dados/culturas.json (relido a cada chamada para que edições valham sem reiniciar)."""
+    with open(ARQUIVO_CULTURAS, encoding="utf-8") as f:
+        dados = json.load(f)
+    dados.pop("_sobre", None)
+    return dados
+
+
+def chave_cultura(nome: str) -> str:
+    """'Feijão Carioca' -> 'feijao' (primeira palavra, minúscula, sem acento)."""
+    primeira = (nome or "").strip().split(" ")[0].lower()
+    return "".join(c for c in unicodedata.normalize("NFD", primeira) if unicodedata.category(c) != "Mn")
+
+
+def avaliar_condicoes(ficha: dict, leitura: Optional[TelemetriaDB], previsao: Optional[dict]) -> List[str]:
+    """Compara sensores e previsão com as faixas da ficha e devolve alertas objetivos em texto."""
+    alertas = []
+    t_ideal, t_crit = ficha["temperatura_ideal_c"], ficha["temperatura_critica_c"]
+    u_ideal = ficha["umidade_solo_ideal_percentual"]
+
+    if leitura:
+        t, u = leitura.temperatura_ar, leitura.umidade_solo
+        if t > t_crit["max"] or t < t_crit["min"]:
+            alertas.append(f"Temperatura atual {t} °C fora do limite crítico ({t_crit['min']}–{t_crit['max']} °C).")
+        elif t > t_ideal["max"] or t < t_ideal["min"]:
+            alertas.append(f"Temperatura atual {t} °C fora da faixa ideal ({t_ideal['min']}–{t_ideal['max']} °C).")
+        if u < u_ideal["min"]:
+            alertas.append(f"Umidade do solo {u}% abaixo do ideal ({u_ideal['min']}–{u_ideal['max']}%).")
+        elif u > u_ideal["max"]:
+            alertas.append(f"Umidade do solo {u}% acima do ideal ({u_ideal['min']}–{u_ideal['max']}%): risco de encharcamento.")
+
+    if isinstance(previsao, dict):
+        quentes = [f"{d['dia_semana']} {d['data'][8:10]}/{d['data'][5:7]} ({d['temp_max']} °C)"
+                   for d in previsao["dias"] if d["temp_max"] is not None and d["temp_max"] > t_crit["max"]]
+        frios = [f"{d['dia_semana']} {d['data'][8:10]}/{d['data'][5:7]} ({d['temp_min']} °C)"
+                 for d in previsao["dias"] if d["temp_min"] is not None and d["temp_min"] < t_crit["min"]]
+        if quentes:
+            alertas.append(f"Previsão acima do limite crítico de {t_crit['max']} °C: {', '.join(quentes)}.")
+        if frios:
+            alertas.append(f"Previsão abaixo do limite crítico de {t_crit['min']} °C: {', '.join(frios)}.")
+    return alertas
+
+
+@app.get("/api/v1/culturas")
+def listar_culturas():
+    return carregar_fichas()
+
+
+@app.get("/api/v1/culturas/{nome}")
+def obter_cultura(nome: str):
+    ficha = carregar_fichas().get(chave_cultura(nome))
+    if not ficha:
+        raise HTTPException(status_code=404, detail="Cultura sem ficha técnica cadastrada")
+    return ficha
+
+
+@app.get("/api/v1/culturas/{nome}/condicoes")
+def condicoes_cultura(nome: str, produtor_id: int = 1, db: Session = Depends(get_db)):
+    """Avalia o clima atual (sensores) e a previsão contra a ficha técnica da cultura."""
+    ficha = obter_cultura(nome)
+    leitura = (
+        db.query(TelemetriaDB)
+        .filter(TelemetriaDB.produtor_id == produtor_id)
+        .order_by(TelemetriaDB.timestamp.desc())
+        .first()
+    )
+    previsao = None
+    produtor = db.query(ProdutorDB).filter(ProdutorDB.id == produtor_id).first()
+    if produtor:
+        try:
+            previsao = obter_previsao_tempo(produtor)
+        except Exception:
+            previsao = None
+    alertas = avaliar_condicoes(ficha, leitura, previsao)
+    return {"cultura": ficha["nome"], "alertas": alertas, "condicoes_ok": not alertas}
+
+
 # ==========================================
 # 6. ASSISTENTE IA (CHAT)
 # ==========================================
 # A chave fica em back/.env (veja back/.env.example), carregada automaticamente abaixo.
 #   Chave grátis em: https://aistudio.google.com/apikey
 import os
-import json
-from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -1106,6 +1188,11 @@ Regras:
   (fim_colheita_previsto). Fases "Atrasado" merecem alerta.
   Para "vou ter X em <período>?": haverá produto se o intervalo inicio_colheita_previsto–fim_colheita_previsto de algum plantio
   de X se sobrepuser ao período. Se a sobreposição for parcial, diga exatamente quais dias ficam cobertos e quais ficam sem produto.
+- Ficha técnica (fichas_tecnicas_culturas): é a FONTE para números agronômicos (ciclo, temperaturas, umidade ideal, época de
+  plantio na região, conservação, riscos). Prefira esses valores ao seu conhecimento geral e diga "pela ficha técnica" ao usá-los.
+  Para "quando plantar X", use meses_plantio/epoca_plantio_regiao + ciclo_dias + pico de vendas.
+  alertas_agronomicos já traz comparações calculadas (sensores e previsão x faixas da ficha): mencione-os quando forem relevantes.
+  Use riscos_climaticos para avisar de doenças/pragas quando a previsão ou os sensores indicarem a condição descrita.
 - Se faltar dado para responder, diga isso e responda com o que existe.
 - Nunca invente números que não estejam nos dados.
 - Assuntos fora de agro/gestão do negócio: recuse educadamente."""
@@ -1167,11 +1254,28 @@ def montar_contexto(db: Session, produtor_id: int) -> str:
             print(f"[chat] previsão indisponível: {e}")
             previsao = "previsão do tempo indisponível no momento"
 
+    # Fichas técnicas só das culturas que o produtor tem (estoque, plantios ou perfil) + alertas calculados
+    nomes_culturas = [p["nome"] for p in produtos]
+    nomes_culturas += [c for (c,) in db.query(PlantioDB.cultura).filter(PlantioDB.produtor_id == produtor_id).all()]
+    if produtor and produtor.culturas:
+        nomes_culturas += produtor.culturas.split(",")
+    fichas_todas = carregar_fichas()
+    fichas = {k: fichas_todas[k] for k in dict.fromkeys(chave_cultura(n) for n in nomes_culturas) if k in fichas_todas}
+    ultima_leitura = leituras[0] if leituras else None
+    previsao_dict = previsao if isinstance(previsao, dict) else None
+    alertas_agronomicos = {
+        ficha["nome"]: alertas
+        for ficha in fichas.values()
+        if (alertas := avaliar_condicoes(ficha, ultima_leitura, previsao_dict))
+    }
+
     contexto = {
         "agora_horario_local": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "hoje_dia_semana": DIAS_SEMANA[date.today().weekday()],
         "perfil_propriedade": perfil or "não cadastrado",
         "previsao_7_dias": previsao,
+        "fichas_tecnicas_culturas": fichas,
+        "alertas_agronomicos": alertas_agronomicos or "nenhum: sensores e previsão dentro das faixas das fichas",
         "plantios_ativos": [
             enriquecer_plantio(p)
             for p in db.query(PlantioDB)

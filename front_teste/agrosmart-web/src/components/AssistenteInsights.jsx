@@ -3,11 +3,14 @@ import ReactMarkdown from "react-markdown";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { MessageSquare, ThumbsUp, ThumbsDown, AlertOctagon, Timer, ChevronDown, ChevronUp } from "lucide-react";
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina } from "./ui";
+import { SERIES, EIXO, EIXO_Y, GRADE, CURSOR_BARRA } from "./temaGraficos";
+import { Dica } from "./graficos";
 
 const FILTROS = [
   { valor: "", label: "Todas" },
-  { valor: "negativas", label: "👎 Não ajudaram" },
-  { valor: "positivas", label: "👍 Ajudaram" },
+  { valor: "negativas", label: "Não ajudaram" },
+  { valor: "positivas", label: "Ajudaram" },
   { valor: "sem_avaliacao", label: "Sem avaliação" },
   { valor: "falhas", label: "Falhas da IA" },
 ];
@@ -100,31 +103,27 @@ export default function AssistenteInsights() {
 
   const e = estatisticas;
   const kpis = [
-    { titulo: "Perguntas (30 dias)", valor: e ? e.total : "--", detalhe: e ? `${e.respondidas} respondidas` : "", icone: MessageSquare, cor: "bg-emerald-50 text-emerald-600" },
+    { titulo: "Perguntas (30 dias)", valor: e ? e.total : "--", detalhe: e ? `${e.respondidas} respondidas` : "", icone: MessageSquare, cor: "text-slate-400" },
     {
       titulo: "Satisfação",
       valor: e?.satisfacao_percentual != null ? `${e.satisfacao_percentual}%` : "--",
-      detalhe: e ? `${e.positivas} 👍 · ${e.negativas} 👎 de ${e.avaliadas} avaliadas` : "",
+      detalhe: e ? `${e.positivas} ajudaram e ${e.negativas} não, de ${e.avaliadas} avaliadas` : "",
       icone: ThumbsUp,
-      cor: "bg-blue-50 text-blue-600",
+      cor: "text-slate-400",
     },
-    { titulo: "Falhas da IA", valor: e ? e.falhas : "--", detalhe: "sobrecarga ou chave inválida", icone: AlertOctagon, cor: e?.falhas ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-500" },
-    { titulo: "Tempo médio", valor: e?.tempo_medio_s != null ? `${e.tempo_medio_s} s` : "--", detalhe: "por resposta", icone: Timer, cor: "bg-amber-50 text-amber-600" },
+    { titulo: "Falhas da IA", valor: e ? e.falhas : "--", detalhe: "sobrecarga ou chave inválida", icone: AlertOctagon, cor: e?.falhas ? "text-red-600" : "text-slate-400" },
+    { titulo: "Tempo médio", valor: e?.tempo_medio_s != null ? `${e.tempo_medio_s} s` : "--", detalhe: "por resposta", icone: Timer, cor: "text-slate-400" },
   ];
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Assistente IA</h1>
-          <p className="text-sm text-slate-500">O que os produtores perguntam ao chat e como avaliam as respostas</p>
-        </div>
+    <div className="space-y-6">
+      <CabecalhoPagina sobretitulo="Inteligência" titulo="Assistente IA" descricao="O que os produtores perguntam ao chat e como avaliam as respostas">
         {erroConexao && (
           <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 self-start">
             Sem conexão com a API
           </span>
         )}
-      </div>
+      </CabecalhoPagina>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map(({ titulo, valor, detalhe, icone: Icone, cor }) => (
@@ -134,7 +133,7 @@ export default function AssistenteInsights() {
               <p className="text-2xl font-bold text-slate-800 mt-1">{valor}</p>
               <p className="text-xs text-slate-400 mt-1">{detalhe}</p>
             </div>
-            <div className={`p-3 rounded-lg ${cor}`}>
+            <div className={cor}>
               <Icone className="w-6 h-6" />
             </div>
           </div>
@@ -143,26 +142,25 @@ export default function AssistenteInsights() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800 mb-4">Perguntas por dia (últimos 14 dias)</h2>
+        <h2 className="text-[15px] font-semibold text-slate-900 mb-4">Perguntas por dia (últimos 14 dias)</h2>
         <div className="h-56 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={e?.perguntas_por_dia || []} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="data" tickFormatter={formatarDiaCurto} tick={{ fontSize: 11 }} stroke="#64748b" />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke="#64748b" />
+            <BarChart data={e?.perguntas_por_dia || []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid {...GRADE} />
+              <XAxis dataKey="data" tickFormatter={formatarDiaCurto} {...EIXO} />
+              <YAxis allowDecimals={false} {...EIXO_Y} width={28} />
               <Tooltip
-                labelFormatter={formatarDiaCurto}
-                formatter={(v) => [v, "Perguntas"]}
-                contentStyle={{ backgroundColor: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                cursor={CURSOR_BARRA}
+                content={<Dica rotulo={formatarDiaCurto} formatar={(v) => `${v} ${v === 1 ? "pergunta" : "perguntas"}`} />}
               />
-              <Bar dataKey="total" fill="#059669" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="total" name="Perguntas" fill={SERIES[0]} maxBarSize={18} radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">De onde perguntam</h2>
+        <h2 className="text-[15px] font-semibold text-slate-900">De onde perguntam</h2>
         <p className="text-xs text-slate-500 mb-4">Aba aberta no momento da pergunta (30 dias)</p>
         {!e?.por_tela?.length ? (
           <p className="text-sm text-slate-400">Sem perguntas no período.</p>
@@ -174,8 +172,8 @@ export default function AssistenteInsights() {
                   <span className="text-slate-700">{rotuloTela(t.tela)}</span>
                   <span className="font-semibold text-slate-800">{t.total}</span>
                 </div>
-                <div className="h-2 mt-1 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(t.total / e.total) * 100}%` }} />
+                <div className="h-2 mt-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-emerald-700" style={{ width: `${(t.total / e.total) * 100}%` }} />
                 </div>
               </div>
             ))}
@@ -186,14 +184,14 @@ export default function AssistenteInsights() {
 
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-800">Perguntas recentes</h2>
+          <h2 className="text-[15px] font-semibold text-slate-900">Perguntas recentes</h2>
           <div className="flex flex-wrap rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {FILTROS.map((f) => (
               <button
                 key={f.valor}
                 onClick={() => setFiltro(f.valor)}
                 className={`px-3 py-1.5 transition-colors ${
-                  filtro === f.valor ? "bg-emerald-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+                  filtro === f.valor ? "bg-emerald-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
                 {f.label}
@@ -202,7 +200,7 @@ export default function AssistenteInsights() {
           </div>
         </div>
         {interacoes.length === 0 ? (
-          <p className="text-sm text-slate-400">Nenhuma pergunta neste filtro. Use o 💬 no canto da tela para perguntar.</p>
+          <p className="text-sm text-slate-400">Nenhuma pergunta neste filtro. Use o botão Perguntar ao assistente, no canto da tela.</p>
         ) : (
           <div className="space-y-3">
             {interacoes.map((item) => (

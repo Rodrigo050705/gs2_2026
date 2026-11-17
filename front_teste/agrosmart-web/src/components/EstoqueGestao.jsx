@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina } from "./ui";
 
 const FORM_INICIAL = {
   nome: "",
@@ -173,18 +174,9 @@ export default function EstoqueGestao() {
   }, [produtos, busca, categoriaFiltro]);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">
-            Gestão & Cadastro de Estoque
-          </h1>
-          <p className="text-sm text-slate-500">
-            Controle de lotes colhidos, preços praticados e validade da produção
-          </p>
-        </div>
-
+      <CabecalhoPagina sobretitulo="Comercial" titulo="Gestão & Cadastro de Estoque" descricao="Controle de lotes colhidos, preços praticados e validade da produção">
         {mensagemFeedback && (
           <div
             className={`px-4 py-2 rounded-lg text-xs font-semibold shadow-sm border ${
@@ -196,14 +188,14 @@ export default function EstoqueGestao() {
             {mensagemFeedback.texto}
           </div>
         )}
-      </div>
+      </CabecalhoPagina>
 
       {/* Formulário de Cadastro / Edição */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-800">
+            <h2 className="text-[15px] font-semibold text-slate-900">
               {editandoId ? "Editar Produto Selecionado" : "Cadastrar Novo Produto"}
             </h2>
           </div>

@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown, X, ArrowUp, ArrowUpRight, AlertCircle } from "lucide-react";
+import { LogoSimbolo } from "./Logo";
 
 // Estilo dos elementos Markdown das respostas da IA (Tailwind zera listas/títulos por padrão)
 const MD_COMPONENTS = {
   p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
   ul: ({ children }) => <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0">{children}</ul>,
   ol: ({ children }) => <ol className="mb-2 ml-4 list-decimal space-y-1 last:mb-0">{children}</ol>,
-  strong: ({ children }) => <strong className="font-semibold text-emerald-900">{children}</strong>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
   h1: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
   h2: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
   h3: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
@@ -35,7 +36,7 @@ export default function ChatWidget({ tela, rotuloTela }) {
   const sugestoes = SUGESTOES_POR_TELA[tela] || SUGESTOES_PADRAO;
   const [aberto, setAberto] = useState(false);
   const [mensagens, setMensagens] = useState([
-    { papel: "model", texto: "Olá! Sou o assistente AgroSmart. Pergunte sobre seu estoque, vendas ou clima. 🌱" },
+    { papel: "model", texto: "Olá! Sou o assistente AgroSmart. Pergunte sobre seu estoque, vendas ou clima." },
   ]);
   const [entrada, setEntrada] = useState("");
   const [carregando, setCarregando] = useState(false);
@@ -72,7 +73,7 @@ export default function ChatWidget({ tela, rotuloTela }) {
         ...m,
         {
           papel: "model",
-          texto: `⚠️ ${err.message === "Failed to fetch" ? "Não consegui falar com o servidor. A API está rodando?" : err.message}`,
+          texto: `${err.message === "Failed to fetch" ? "Não consegui falar com o servidor. A API está rodando?" : err.message}`,
           erro: true,
         },
       ]);
@@ -84,7 +85,7 @@ export default function ChatWidget({ tela, rotuloTela }) {
   const atualizarMensagem = (indice, campos) =>
     setMensagens((lista) => lista.map((m, i) => (i === indice ? { ...m, ...campos } : m)));
 
-  // 👍/👎 numa resposta. No 👎 abre um campo opcional "o que faltou?".
+  // Avaliação de uma resposta (ajudou / não ajudou). No "não ajudou" abre um campo opcional "o que faltou?".
   async function avaliar(indice, nota, comentario) {
     const m = mensagens[indice];
     atualizarMensagem(indice, { feedback: nota, comentarioEnviado: comentario !== undefined });
@@ -99,116 +100,152 @@ export default function ChatWidget({ tela, rotuloTela }) {
     }
   }
 
+  const conversaVazia = mensagens.length === 1;
+
   return (
     <>
-      {/* Botão flutuante */}
-      <button
-        onClick={() => setAberto((a) => !a)}
-        className="fixed bottom-5 right-5 z-50 h-14 w-14 rounded-full bg-emerald-700 text-white text-2xl shadow-lg hover:bg-emerald-800 transition-colors"
-        aria-label={aberto ? "Fechar assistente" : "Abrir assistente"}
-      >
-        {aberto ? "✕" : "💬"}
-      </button>
+      {/* Botão que abre o assistente */}
+      {!aberto && (
+        <button
+          onClick={() => setAberto(true)}
+          className="fixed bottom-5 right-5 z-40 flex items-center gap-2.5 rounded-full bg-emerald-900 py-2.5 pl-3 pr-4 text-sm font-medium text-white shadow-[0_6px_20px_rgba(18,36,26,0.28)] hover:bg-emerald-950 transition-colors"
+        >
+          <LogoSimbolo className="w-6 h-6" />
+          Perguntar ao assistente
+        </button>
+      )}
 
-      {/* Janela do chat */}
+      {/* Painel lateral do assistente */}
       {aberto && (
-        <div className="fixed bottom-24 right-5 z-50 flex h-[32rem] w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-          <div className="bg-emerald-800 px-4 py-3 text-white">
-            <p className="font-semibold">Assistente AgroSmart</p>
-            <p className="text-xs text-emerald-100">
-              Responde com base nos seus dados{rotuloTela ? ` · você está em ${rotuloTela}` : ""}
-            </p>
-          </div>
-
-          <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-3">
-            {mensagens.map((m, i) => (
-              <div key={i} className={`flex flex-col ${m.papel === "user" ? "items-end" : "items-start"}`}>
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                    m.papel === "user" ? "whitespace-pre-wrap" : ""
-                  } ${
-                    m.papel === "user"
-                      ? "bg-emerald-700 text-white rounded-br-sm"
-                      : m.erro
-                      ? "bg-red-50 text-red-700 border border-red-200 rounded-bl-sm"
-                      : "bg-white text-slate-800 border border-slate-200 rounded-bl-sm"
-                  }`}
-                >
-                  {m.papel === "user" ? (
-                    m.texto
-                  ) : (
-                    <ReactMarkdown components={MD_COMPONENTS}>{m.texto}</ReactMarkdown>
-                  )}
-                </div>
-
-                {/* Avaliação da resposta */}
-                {m.interacaoId && (
-                  <div className="mt-1 ml-1 flex items-center gap-1 text-xs text-slate-400">
-                    {m.feedback ? (
-                      <span>{m.feedback === 1 ? "Obrigado pela avaliação!" : "Obrigado, vamos melhorar."}</span>
-                    ) : (
-                      <span>Esta resposta ajudou?</span>
-                    )}
-                    {[
-                      { nota: 1, Icone: ThumbsUp, cor: "text-emerald-600", rotulo: "Ajudou" },
-                      { nota: -1, Icone: ThumbsDown, cor: "text-red-500", rotulo: "Não ajudou" },
-                    ].map(({ nota, Icone, cor, rotulo }) => (
-                      <button
-                        key={nota}
-                        onClick={() => avaliar(i, nota)}
-                        aria-label={rotulo}
-                        title={rotulo}
-                        className={`rounded p-1 hover:bg-slate-200 ${m.feedback === nota ? cor : ""}`}
-                      >
-                        <Icone className="h-3.5 w-3.5" fill={m.feedback === nota ? "currentColor" : "none"} />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {m.feedback === -1 && !m.comentarioEnviado && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      avaliar(i, -1, m.rascunho || "");
-                    }}
-                    className="mt-1 ml-1 flex w-[85%] gap-1"
-                  >
-                    <input
-                      autoFocus
-                      value={m.rascunho || ""}
-                      onChange={(e) => atualizarMensagem(i, { rascunho: e.target.value })}
-                      maxLength={500}
-                      placeholder="O que faltou? (opcional)"
-                      className="flex-1 rounded-lg border border-slate-300 px-2 py-1 text-xs outline-none focus:border-emerald-600"
-                    />
-                    <button type="submit" className="rounded-lg bg-slate-700 px-2 text-xs text-white">
-                      Enviar
-                    </button>
-                  </form>
-                )}
+        <aside
+          aria-label="Assistente AgroSmart"
+          className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-slate-200 bg-white shadow-[-12px_0_40px_rgba(18,36,26,0.12)] sm:w-[26rem]"
+        >
+          <header className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <LogoSimbolo className="w-8 h-8" />
+              <div className="leading-tight">
+                <p className="font-display text-[17px] font-bold tracking-[-0.01em] text-slate-900">Assistente</p>
+                <p className="text-xs text-slate-500">Responde com base nos dados da sua propriedade</p>
               </div>
-            ))}
+            </div>
+            <button
+              onClick={() => setAberto(false)}
+              aria-label="Fechar assistente"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </header>
 
-            {carregando && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500">
-                  Analisando seus dados…
-                </div>
+          {rotuloTela && (
+            <p className="border-b border-slate-100 bg-slate-50 px-5 py-2 text-xs text-slate-600">
+              Você está em <span className="font-semibold text-slate-900">{rotuloTela}</span>. Pode perguntar sobre o que está na tela.
+            </p>
+          )}
+
+          <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+            {conversaVazia && !carregando && (
+              <div>
+                <p className="font-display text-[22px] font-bold leading-tight tracking-[-0.01em] text-slate-900">
+                  O que você quer saber da sua lavoura?
+                </p>
+                <p className="mt-1.5 text-sm text-slate-600">Estoque, vendas, plantios e clima. Algumas ideias para começar:</p>
+                <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                  {sugestoes.map((s) => (
+                    <li key={s}>
+                      <button
+                        onClick={() => enviar(s)}
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm text-slate-800 hover:bg-slate-50 transition-colors"
+                      >
+                        {s}
+                        <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
-            {mensagens.length === 1 && !carregando && (
-              <div className="flex flex-wrap gap-2 pt-1">
-                {sugestoes.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => enviar(s)}
-                    className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs text-emerald-800 hover:bg-emerald-50"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+            {mensagens.slice(1).map((m, idx) => {
+              const i = idx + 1; // índice na lista completa (a posição 0 é a saudação, que virou a tela inicial)
+              if (m.papel === "user") {
+                return (
+                  <div key={i} className="flex justify-end">
+                    <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-950">
+                      {m.texto}
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <div key={i}>
+                  {m.erro ? (
+                    <p className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-800">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      {m.texto}
+                    </p>
+                  ) : (
+                    <div className="text-sm leading-relaxed text-slate-800">
+                      <ReactMarkdown components={MD_COMPONENTS}>{m.texto}</ReactMarkdown>
+                    </div>
+                  )}
+
+                  {m.interacaoId && !m.erro && (
+                    <div className="mt-2 flex items-center gap-1 text-xs text-slate-500">
+                      <span className="mr-1">{m.feedback ? (m.feedback === 1 ? "Obrigado pela avaliação." : "Obrigado, vamos melhorar.") : "Esta resposta ajudou?"}</span>
+                      {[
+                        { nota: 1, Icone: ThumbsUp, cor: "text-emerald-700", rotulo: "Ajudou" },
+                        { nota: -1, Icone: ThumbsDown, cor: "text-red-600", rotulo: "Não ajudou" },
+                      ].map(({ nota, Icone, cor, rotulo }) => (
+                        <button
+                          key={nota}
+                          onClick={() => avaliar(i, nota)}
+                          aria-label={rotulo}
+                          aria-pressed={m.feedback === nota}
+                          title={rotulo}
+                          className={`rounded-md p-1.5 hover:bg-slate-100 transition-colors ${m.feedback === nota ? cor : ""}`}
+                        >
+                          <Icone className="h-3.5 w-3.5" fill={m.feedback === nota ? "currentColor" : "none"} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {m.feedback === -1 && !m.comentarioEnviado && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        avaliar(i, -1, m.rascunho || "");
+                      }}
+                      className="mt-2 flex gap-2"
+                    >
+                      <input
+                        autoFocus
+                        value={m.rascunho || ""}
+                        onChange={(e) => atualizarMensagem(i, { rascunho: e.target.value })}
+                        maxLength={500}
+                        placeholder="O que faltou? (opcional)"
+                        className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs outline-none focus:border-emerald-700"
+                      />
+                      <button type="submit" className="rounded-lg border border-slate-300 px-3 text-xs font-medium text-slate-800 hover:bg-slate-50">
+                        Enviar
+                      </button>
+                    </form>
+                  )}
+                </div>
+              );
+            })}
+
+            {carregando && (
+              <p className="flex items-center gap-2 text-sm text-slate-500" role="status">
+                <span className="flex gap-1" aria-hidden="true">
+                  {[0, 150, 300].map((atraso) => (
+                    <span key={atraso} className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: `${atraso}ms` }} />
+                  ))}
+                </span>
+                Consultando os seus dados
+              </p>
             )}
             <div ref={fimRef} />
           </div>
@@ -218,24 +255,36 @@ export default function ChatWidget({ tela, rotuloTela }) {
               e.preventDefault();
               enviar();
             }}
-            className="flex gap-2 border-t border-slate-200 p-2"
+            className="border-t border-slate-200 p-4"
           >
-            <input
-              value={entrada}
-              onChange={(e) => setEntrada(e.target.value)}
-              placeholder="Digite sua pergunta…"
-              maxLength={2000}
-              className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-600"
-            />
-            <button
-              type="submit"
-              disabled={carregando || !entrada.trim()}
-              className="rounded-xl bg-emerald-700 px-4 text-sm font-medium text-white disabled:opacity-40"
-            >
-              Enviar
-            </button>
+            <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 focus-within:border-emerald-700">
+              <textarea
+                value={entrada}
+                onChange={(e) => setEntrada(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    enviar();
+                  }
+                }}
+                rows={2}
+                placeholder="Escreva sua pergunta"
+                maxLength={2000}
+                aria-label="Pergunta para o assistente"
+                className="flex-1 resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+              />
+              <button
+                type="submit"
+                disabled={carregando || !entrada.trim()}
+                aria-label="Enviar pergunta"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-900 text-white hover:bg-emerald-950 disabled:bg-slate-200 disabled:text-slate-400 transition-colors"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">Enter envia, Shift + Enter quebra a linha.</p>
           </form>
-        </div>
+        </aside>
       )}
     </>
   );

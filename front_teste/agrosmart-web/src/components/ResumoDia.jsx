@@ -1,20 +1,20 @@
 import React, { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { Sparkles, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { API_BASE_URL } from "../api";
 
 const CHAVE_RECOLHIDO = "agrosmart.resumoRecolhidoEm"; // guarda a data em que foi recolhido
 
 const MD = {
-  ul: ({ children }) => <ul className="space-y-1.5">{children}</ul>,
+  ul: ({ children }) => <ul className="space-y-2.5">{children}</ul>,
   li: ({ children }) => (
-    <li className="flex gap-2 text-sm text-slate-700">
-      <span className="mt-2 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+    <li className="flex gap-2.5 text-sm leading-relaxed text-slate-700">
+      <span className="mt-[9px] w-1 h-1 rounded-full bg-slate-400 shrink-0" />
       <span>{children}</span>
     </li>
   ),
   p: ({ children }) => <span>{children}</span>,
-  strong: ({ children }) => <strong className="font-semibold text-emerald-900">{children}</strong>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
 };
 
 const hoje = () => new Date().toLocaleDateString("sv-SE");
@@ -71,50 +71,59 @@ export default function ResumoDia() {
   const horario = resumo ? new Date(resumo.gerado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
 
   return (
-    <div className="max-w-6xl mx-auto px-6 pt-6">
-      <div className="bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-xl shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
-          <button onClick={alternar} className="flex items-center gap-2 text-left" aria-expanded={!recolhido}>
-            <Sparkles className="w-5 h-5 text-emerald-600" />
-            <span className="font-semibold text-slate-800">Resumo do dia</span>
-            {resumo && !carregando && (
-              <span className="text-xs text-slate-500">
-                {resumo.fonte === "ia" ? `gerado pela IA às ${horario}` : "resumo automático (IA indisponível)"}
-              </span>
-            )}
-            {recolhido ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-slate-400" />}
-          </button>
+    <section className={`bg-white border border-slate-200 rounded-2xl ${recolhido ? "" : "h-full"}`}>
+      <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
+        <div>
+          <h2 className="text-[15px] font-semibold text-slate-900">Resumo do dia</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {carregando && !resumo
+              ? "Preparando o resumo"
+              : resumo?.fonte === "ia"
+              ? `Gerado pela IA às ${horario}`
+              : "Gerado por regras, sem IA no momento"}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           {!recolhido && (
             <button
               onClick={() => carregar(true)}
               disabled={carregando}
               title="Gerar um novo resumo com os dados de agora"
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${carregando ? "animate-spin" : ""}`} />
-              Atualizar
+              Gerar de novo
             </button>
           )}
+          <button
+            onClick={alternar}
+            aria-expanded={!recolhido}
+            aria-label={recolhido ? "Mostrar o resumo" : "Recolher o resumo"}
+            title={recolhido ? "Mostrar o resumo" : "Recolher o resumo"}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+          >
+            {recolhido ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </button>
         </div>
-
-        {!recolhido && (
-          <div className="px-5 pb-4">
-            {carregando && !resumo && (
-              <div className="space-y-2 animate-pulse">
-                {[90, 75, 82, 60].map((w) => (
-                  <div key={w} className="h-3.5 bg-emerald-100 rounded" style={{ width: `${w}%` }} />
-                ))}
-              </div>
-            )}
-            {erro && !resumo && <p className="text-sm text-red-600">{erro}</p>}
-            {resumo && (
-              <div className={carregando ? "opacity-50" : ""}>
-                <ReactMarkdown components={MD}>{resumo.texto}</ReactMarkdown>
-              </div>
-            )}
-          </div>
-        )}
       </div>
-    </div>
+
+      {!recolhido && (
+        <div className="border-t border-slate-100 px-5 py-4">
+          {carregando && !resumo && (
+            <div className="space-y-2 animate-pulse">
+              {[90, 75, 82, 60].map((w) => (
+                <div key={w} className="h-3.5 bg-slate-100 rounded" style={{ width: `${w}%` }} />
+              ))}
+            </div>
+          )}
+          {erro && !resumo && <p className="text-sm text-red-600">{erro}</p>}
+          {resumo && (
+            <div className={carregando ? "opacity-50" : ""}>
+              <ReactMarkdown components={MD}>{resumo.texto}</ReactMarkdown>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

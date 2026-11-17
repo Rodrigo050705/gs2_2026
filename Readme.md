@@ -48,6 +48,7 @@ contribuir. O desenho do CI/CD e do deploy está em [`docs/cicd.md`](docs/cicd.m
 
 | Aba | O que mostra |
 |---|---|
+| Visão geral | Tela inicial: receita dos últimos 30 dias, Resumo do dia, leitura atual dos sensores, próximas colheitas, estoque em risco e receita por produto |
 | Clima & IoT | Sensores em tempo real, previsão de 7 dias, condições por cultura e alertas da automação |
 | Plantios | Talhões, fases, calendário de colheita e ficha técnica de cada cultura |
 | Vendas | Registro de vendas, lucro, tendência de 30 dias e receita mensal por produto |
@@ -55,7 +56,8 @@ contribuir. O desenho do CI/CD e do deploy está em [`docs/cicd.md`](docs/cicd.m
 | Gestão de Estoque | Cadastro de produtos, preços e validades |
 | Assistente IA | Perguntas feitas ao chat, avaliações 👍/👎 e de qual aba vieram |
 
-Em todas as abas: o **Resumo do dia** (gerado pela IA) no topo e o **chat** 💬 no canto inferior.
+O **Resumo do dia** (gerado pela IA) fica na Visão geral. Em todas as abas, o botão **Perguntar ao
+assistente**, no canto inferior, abre o chat num painel lateral.
 
 Na primeira subida, a API cria o banco e popula **dados de demonstração** (5 produtos, ~6 meses de
 vendas, 6 plantios e uma propriedade em Atibaia-SP).

@@ -53,7 +53,7 @@ export default function PrevisaoTempo() {
       {/* Previsão de 7 dias */}
       <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <h2 className="text-lg font-semibold text-slate-800">Previsão para os próximos 7 dias</h2>
+          <h2 className="text-[15px] font-semibold text-slate-900">Previsão para os próximos 7 dias</h2>
           {previsao && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <MapPin className="w-3.5 h-3.5 text-emerald-600" />
@@ -113,7 +113,7 @@ export default function PrevisaoTempo() {
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
           <Leaf className="w-5 h-5 text-emerald-600" />
-          <h2 className="text-lg font-semibold text-slate-800">Condições por cultura</h2>
+          <h2 className="text-[15px] font-semibold text-slate-900">Condições por cultura</h2>
         </div>
         <p className="text-xs text-slate-500 mb-3">Sensores e previsão comparados com a ficha técnica de cada cultura plantada.</p>
         {alertasCulturas.length === 0 ? (

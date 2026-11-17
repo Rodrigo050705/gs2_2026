@@ -6,9 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  Cell,
 } from "recharts";
 import {
   DollarSign,
@@ -18,12 +16,86 @@ import {
 } from "lucide-react";
 
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina } from "./ui";
+import { SERIES, COR_OUTROS, STATUS, EIXO, EIXO_Y, GRADE, CURSOR_BARRA } from "./temaGraficos";
+import { Dica, Legenda } from "./graficos";
 
 const formatarMoeda = (valor) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
   }).format(valor || 0);
+
+const SERIES_PRECO = [
+  { chave: "custo_unitario", nome: "Custo unitário", cor: COR_OUTROS },
+  { chave: "preco_venda", nome: "Seu preço", cor: SERIES[0] },
+  { chave: "preco_mercado", nome: "Preço de mercado (CEASA)", cor: SERIES[1] },
+];
+
+// O estoque inteiro numa barra só, dividido pelo prazo até vencer; embaixo, o valor de cada faixa.
+function FaixasValidade({ dados }) {
+  const total = dados.reduce((soma, d) => soma + d.valor, 0);
+  if (!total) return <p className="text-sm text-slate-400">Nenhum produto encontrado com os filtros atuais.</p>;
+  return (
+    <div>
+      <p className="mb-2 text-xs text-slate-500">
+        <span className="font-semibold tabular-nums text-slate-900">{formatarMoeda(total)}</span> em estoque
+      </p>
+      <div className="flex h-7 gap-0.5" role="img" aria-label={dados.map((d) => `${d.faixa}: ${formatarMoeda(d.valor)}`).join("; ")}>
+        {dados
+          .filter((d) => d.valor > 0)
+          .map((d) => {
+            const parte = (d.valor / total) * 100;
+            return (
+              <div
+                key={d.faixa}
+                title={`${d.faixa}: ${formatarMoeda(d.valor)} (${parte.toFixed(0)}%)`}
+                className="flex min-w-0 items-center rounded-[4px] px-2 text-xs font-semibold"
+                style={{ width: `${parte}%`, background: d.cor, color: d.cor === STATUS.atencao ? "#0b0b0b" : "#ffffff" }}
+              >
+                {parte >= 12 && `${parte.toFixed(0)}%`}
+              </div>
+            );
+          })}
+      </div>
+      <ul className="mt-4 divide-y divide-slate-100">
+        {dados.map((d) => (
+          <li key={d.faixa} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+            <span className="flex items-center gap-2.5 text-slate-700">
+              <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: d.cor }} aria-hidden="true" />
+              {d.faixa}
+            </span>
+            <span className="font-semibold tabular-nums text-slate-900">{formatarMoeda(d.valor)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Barras em ordem, do maior para o menor, numa cor só: o comprimento já diz o tamanho.
+function BarrasRanking({ dados, metrica }) {
+  if (!dados.length) return <p className="text-sm text-slate-400">Nenhum produto encontrado com os filtros atuais.</p>;
+  const emValor = metrica === "valor_total_estoque";
+  const maior = Math.max(...dados.map((d) => d[metrica]), 1);
+  return (
+    <ul className="space-y-3.5">
+      {dados.map((d) => (
+        <li key={d.id}>
+          <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+            <span className="truncate font-medium text-slate-800">{d.nome}</span>
+            <span className="font-semibold tabular-nums text-slate-900">
+              {emValor ? formatarMoeda(d[metrica]) : `${d[metrica].toLocaleString("pt-BR")} ${d.unidade}`}
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100">
+            <div className="h-full rounded-full" style={{ width: `${(d[metrica] / maior) * 100}%`, background: SERIES[0] }} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function ComercialDashboard() {
   const [produtos, setProdutos] = useState([]);
@@ -106,9 +178,9 @@ export default function ComercialDashboard() {
       .reduce((acc, i) => acc + i.valor_total_estoque, 0);
 
     return [
-      { faixa: "Crítico (≤ 3 dias)", valor: Number(critico.toFixed(2)), cor: "#dc2626" },
-      { faixa: "Atenção (4 a 7 dias)", valor: Number(atencao.toFixed(2)), cor: "#f59e0b" },
-      { faixa: "Saudável (> 7 dias)", valor: Number(saudavel.toFixed(2)), cor: "#059669" },
+      { faixa: "Crítico (≤ 3 dias)", valor: Number(critico.toFixed(2)), cor: STATUS.critico },
+      { faixa: "Atenção (4 a 7 dias)", valor: Number(atencao.toFixed(2)), cor: STATUS.atencao },
+      { faixa: "Saudável (> 7 dias)", valor: Number(saudavel.toFixed(2)), cor: STATUS.bom },
     ];
   }, [produtosFiltrados]);
 
@@ -120,24 +192,15 @@ export default function ComercialDashboard() {
   }, [produtosFiltrados, metricaRanking]);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">
-            Inteligência Comercial & Estoque
-          </h1>
-          <p className="text-sm text-slate-500">
-            Análise de margens, risco de perda por validade e concentração de capital
-          </p>
-        </div>
-
+      <CabecalhoPagina sobretitulo="Comercial" titulo="Inteligência Comercial & Estoque" descricao="Análise de margens, risco de perda por validade e concentração de capital">
         {erroConexao && (
           <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 self-start">
             Sem conexão com a API
           </span>
         )}
-      </div>
+      </CabecalhoPagina>
 
       {/* Barra de Filtros Operacionais */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
@@ -155,7 +218,7 @@ export default function ComercialDashboard() {
                 onClick={() => setCategoriaSelecionada(cat)}
                 className={`px-3 py-1.5 transition-colors ${
                   categoriaSelecionada === cat
-                    ? "bg-emerald-600 text-white"
+                    ? "bg-emerald-900 text-white"
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
@@ -201,7 +264,7 @@ export default function ComercialDashboard() {
               {produtosFiltrados.length} culturas selecionadas
             </p>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
+          <div className="text-slate-400">
             <DollarSign className="w-7 h-7" />
           </div>
         </div>
@@ -220,7 +283,7 @@ export default function ComercialDashboard() {
             </p>
             <p className="text-xs text-slate-400 mt-1">Prioridade de escoamento</p>
           </div>
-          <div className="p-3 bg-red-50 text-red-600 rounded-lg">
+          <div className="text-slate-400">
             <AlertCircle className="w-7 h-7" />
           </div>
         </div>
@@ -239,7 +302,7 @@ export default function ComercialDashboard() {
             </p>
             <p className="text-xs text-slate-400 mt-1">Meta saudável: acima de 25%</p>
           </div>
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
+          <div className="text-slate-400">
             <TrendingUp className="w-7 h-7" />
           </div>
         </div>
@@ -248,7 +311,7 @@ export default function ComercialDashboard() {
       {/* INDICADOR 1: Margem de Lucro vs. Preço de Mercado */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-slate-800">
+          <h2 className="text-[15px] font-semibold text-slate-900">
             1. Rentabilidade: Custo vs. Preço Praticado vs. Mercado (R$)
           </h2>
           <p className="text-xs text-slate-500">
@@ -261,37 +324,30 @@ export default function ComercialDashboard() {
             Nenhum produto encontrado com os filtros atuais.
           </div>
         ) : (
+          <div>
+            <div className="mb-3">
+              <Legenda itens={SERIES_PRECO} />
+            </div>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={produtosFiltrados}
-                margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="nome" tick={{ fontSize: 12 }} stroke="#64748b" />
-                <YAxis tick={{ fontSize: 12 }} stroke="#64748b" />
-                <Tooltip formatter={(value) => formatarMoeda(value)} />
-                <Legend />
-                <Bar
-                  dataKey="custo_unitario"
-                  name="Custo Unitário (R$)"
-                  fill="#94a3b8"
-                  radius={[4, 4, 0, 0]}
+              <BarChart data={produtosFiltrados} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
+                <CartesianGrid {...GRADE} />
+                {/* No eixo só o primeiro nome ("Tomate"), para caber no celular; o nome completo vai na caixinha do mouse */}
+                <XAxis
+                  dataKey="nome"
+                  {...EIXO}
+                  tick={{ ...EIXO.tick, fontSize: 11 }}
+                  interval={0}
+                  tickFormatter={(nome) => nome.split(" ")[0]}
                 />
-                <Bar
-                  dataKey="preco_venda"
-                  name="Seu Preço (R$)"
-                  fill="#059669"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Bar
-                  dataKey="preco_mercado"
-                  name="Preço Mercado/CEASA (R$)"
-                  fill="#2563eb"
-                  radius={[4, 4, 0, 0]}
-                />
+                <YAxis {...EIXO_Y} width={36} />
+                <Tooltip cursor={CURSOR_BARRA} content={<Dica formatar={formatarMoeda} />} />
+                {SERIES_PRECO.map(({ chave, nome, cor }) => (
+                  <Bar key={chave} dataKey={chave} name={nome} fill={cor} maxBarSize={18} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                ))}
               </BarChart>
             </ResponsiveContainer>
+          </div>
           </div>
         )}
       </div>
@@ -301,7 +357,7 @@ export default function ComercialDashboard() {
         {/* INDICADOR 2: Capital em Risco por Validade */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div className="mb-4">
-            <h2 className="text-lg font-semibold text-slate-800">
+            <h2 className="text-[15px] font-semibold text-slate-900">
               2. Capital por Prazo de Validade (R$)
             </h2>
             <p className="text-xs text-slate-500">
@@ -309,30 +365,13 @@ export default function ComercialDashboard() {
             </p>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={dadosRiscoValidade}
-                margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="faixa" tick={{ fontSize: 11 }} stroke="#64748b" />
-                <YAxis tick={{ fontSize: 12 }} stroke="#64748b" />
-                <Tooltip formatter={(value) => formatarMoeda(value)} />
-                <Bar dataKey="valor" name="Valor em Estoque (R$)" radius={[6, 6, 0, 0]}>
-                  {dadosRiscoValidade.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.cor} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <FaixasValidade dados={dadosRiscoValidade} />
         </div>
 
         {/* INDICADOR 3: Ranking / Curva ABC de Estoque */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div className="mb-4">
-            <h2 className="text-lg font-semibold text-slate-800">
+            <h2 className="text-[15px] font-semibold text-slate-900">
               3. Ranking por Cultura (
               {metricaRanking === "valor_total_estoque" ? "Valor R$" : "Volume"})
             </h2>
@@ -341,42 +380,7 @@ export default function ComercialDashboard() {
             </p>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={dadosRanking}
-                layout="vertical"
-                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" tick={{ fontSize: 12 }} stroke="#64748b" />
-                <YAxis
-                  dataKey="nome"
-                  type="category"
-                  width={110}
-                  tick={{ fontSize: 12 }}
-                  stroke="#64748b"
-                />
-                <Tooltip
-                  formatter={(value) =>
-                    metricaRanking === "valor_total_estoque"
-                      ? formatarMoeda(value)
-                      : `${value} un/kg`
-                  }
-                />
-                <Bar
-                  dataKey={metricaRanking}
-                  name={
-                    metricaRanking === "valor_total_estoque"
-                      ? "Valor Total (R$)"
-                      : "Quantidade"
-                  }
-                  fill="#0d9488"
-                  radius={[0, 6, 6, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <BarrasRanking dados={dadosRanking} metrica={metricaRanking} />
         </div>
       </div>
     </div>

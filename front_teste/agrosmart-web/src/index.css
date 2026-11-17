@@ -1,1 +1,73 @@
 @import "tailwindcss";
+
+/*
+ * Tokens do AgroSmart.
+ * As telas usam as classes `slate-*` e `emerald-*` do Tailwind. Redefinir as duas escalas aqui
+ * dá a identidade do sistema num lugar só: neutros puxados para o verde (em vez do cinza-azulado
+ * padrão) e um verde-floresta sóbrio, o mesmo do selo do logo. As fontes vêm do index.html.
+ */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: "Bricolage Grotesque", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-slate-50: #f6f8f5;
+  --color-slate-100: #eef1ec;
+  --color-slate-200: #dfe4dc;
+  --color-slate-300: #c8cfc5;
+  --color-slate-400: #9aa497;
+  --color-slate-500: #6f7a6e;
+  --color-slate-600: #525d53;
+  --color-slate-700: #3d463e;
+  --color-slate-800: #262d27;
+  --color-slate-900: #161b17;
+  --color-slate-950: #0c100d;
+
+  --color-emerald-50: #eff5ee;
+  --color-emerald-100: #dde9da;
+  --color-emerald-200: #bfd5ba;
+  --color-emerald-300: #97ba90;
+  --color-emerald-400: #6c9a64;
+  --color-emerald-500: #4f7f47;
+  --color-emerald-600: #3a6a3c;
+  --color-emerald-700: #2e5734;
+  --color-emerald-800: #25482d;
+  --color-emerald-900: #1f3d2b;
+  --color-emerald-950: #12241a;
+
+  --color-sol: #f0b429;
+
+  /* Quadros planos: borda fina no lugar de sombra, cantos um pouco mais fechados */
+  --shadow-sm: 0 0 #0000;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 0.875rem;
+}
+
+@layer base {
+  body {
+    background: #f4f6f3;
+    color: #161b17;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Tudo que é clicável mostra a mãozinha */
+  button:not(:disabled),
+  [role="button"],
+  a[href],
+  select,
+  summary,
+  label[for],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="date"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid #2e5734;
+    outline-offset: 2px;
+  }
+}

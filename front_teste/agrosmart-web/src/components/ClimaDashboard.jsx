@@ -1,21 +1,20 @@
 import React, { useEffect, useState, useMemo } from "react";
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceDot,
 } from "recharts";
 import {
   Thermometer,
   Droplets,
   Sprout,
   AlertTriangle,
-  RefreshCw,
   Filter,
   CheckCircle2,
   Check,
@@ -23,6 +22,9 @@ import {
 import PrevisaoTempo from "./PrevisaoTempo";
 
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina, Carimbo } from "./ui";
+import { SERIES, STATUS, TINTA, EIXO, EIXO_Y, GRADE, CURSOR_LINHA } from "./temaGraficos";
+import { Dica } from "./graficos";
 
 // Usados até a API responder (e se não houver culturas com ficha técnica plantadas).
 const LIMITES_PADRAO = {
@@ -43,6 +45,63 @@ const ESTILO_SEVERIDADE = {
   ALTA: { caixa: "bg-red-50 border-red-200", etiqueta: "bg-red-600", texto: "text-red-900" },
   MEDIA: { caixa: "bg-amber-50 border-amber-200", etiqueta: "bg-amber-500", texto: "text-amber-900" },
 };
+
+// Um sensor por faixa, cada um na sua escala: °C e % não dividem o mesmo eixo.
+// As três faixas compartilham o mouse (syncId), então a linha vertical anda junto nas três.
+function FaixaSensor({ dados, chave, titulo, unidade, cor, limite, rotuloLimite, limiteEhMaximo = false, mostrarHoras = false }) {
+  const valores = dados.map((d) => d[chave]);
+  const ultimo = dados[dados.length - 1];
+  const minimo = Math.min(...valores, limite ?? Infinity);
+  const maximo = Math.max(...valores, limite ?? -Infinity);
+  const folga = Math.max((maximo - minimo) * 0.2, 1);
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-3">
+        <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <span className="h-0.5 w-3 rounded-full" style={{ background: cor }} aria-hidden="true" />
+          {titulo}
+        </p>
+        <p className="text-sm text-slate-500">
+          agora{" "}
+          <span className="font-semibold tabular-nums text-slate-900">
+            {ultimo[chave].toLocaleString("pt-BR")} {unidade}
+          </span>
+        </p>
+      </div>
+      <div className={mostrarHoras ? "h-36" : "h-28"}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={dados} syncId="sensores" margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid {...GRADE} />
+            <XAxis dataKey="horaFormatada" {...EIXO} hide={!mostrarHoras} minTickGap={48} />
+            <YAxis {...EIXO_Y} width={36} tickCount={3} allowDecimals={false} domain={[Math.floor(minimo - folga), Math.ceil(maximo + folga)]} />
+            <Tooltip cursor={CURSOR_LINHA} content={<Dica formatar={(v) => `${v.toLocaleString("pt-BR")} ${unidade}`} />} />
+            {limite !== undefined && limite !== null && (
+              <ReferenceLine
+                y={limite}
+                stroke={STATUS.critico}
+                strokeDasharray="4 4"
+                label={{ value: rotuloLimite, position: limiteEhMaximo ? "insideBottomRight" : "insideTopRight", fill: TINTA.media, fontSize: 11 }}
+              />
+            )}
+            <Area
+              type="monotone"
+              dataKey={chave}
+              name={titulo}
+              stroke={cor}
+              strokeWidth={2}
+              fill={cor}
+              fillOpacity={0.1}
+              dot={false}
+              activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              isAnimationActive={false}
+            />
+            <ReferenceDot x={ultimo.horaFormatada} y={ultimo[chave]} r={4} fill={cor} stroke="#ffffff" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 
 export default function ClimaDashboard() {
   const [telemetria, setTelemetria] = useState([]);
@@ -138,27 +197,14 @@ export default function ClimaDashboard() {
       : telemetria[telemetria.length - 1] || null;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">
-            Monitoramento Climático & IoT
-          </h1>
-          <p className="text-sm text-slate-500">
-            Telemetria em tempo real da estação de campo e alertas automáticos
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs text-slate-500 bg-white px-3 py-2 rounded-lg border shadow-sm">
-          <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
-          <span>
-            {erroConexao
-              ? "Sem conexão com a API"
-              : `Atualizado às ${ultimaAtualizacao || "--:--:--"}`}
-          </span>
-        </div>
-      </div>
+      <CabecalhoPagina sobretitulo="Monitoramento" titulo="Monitoramento Climático & IoT" descricao="Telemetria em tempo real da estação de campo e alertas automáticos">
+        <Carimbo
+          quando={erroConexao ? "Sem conexão com a API" : ultimaAtualizacao || "--:--:--"}
+          origem={erroConexao ? "tentando de novo" : "Leitura dos sensores, a cada 5 s"}
+        />
+      </CabecalhoPagina>
 
       {/* Barra de Filtros Operacionais */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
@@ -180,7 +226,7 @@ export default function ClimaDashboard() {
                 onClick={() => setLimiteLeituras(opcao.valor)}
                 className={`px-3 py-1.5 transition-colors ${
                   limiteLeituras === opcao.valor
-                    ? "bg-emerald-600 text-white"
+                    ? "bg-emerald-900 text-white"
                     : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
@@ -235,7 +281,7 @@ export default function ClimaDashboard() {
               {limites.temperatura_min_critica !== null && ` ou abaixo de ${limites.temperatura_min_critica}°C`}
             </p>
           </div>
-          <div className="p-3 bg-orange-50 text-orange-600 rounded-lg">
+          <div className="text-slate-400">
             <Thermometer className="w-7 h-7" />
           </div>
         </div>
@@ -248,7 +294,7 @@ export default function ClimaDashboard() {
             </p>
             <p className="text-xs text-slate-400 mt-1">Conforto térmico foliar</p>
           </div>
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
+          <div className="text-slate-400">
             <Droplets className="w-7 h-7" />
           </div>
         </div>
@@ -267,7 +313,7 @@ export default function ClimaDashboard() {
               Crítico abaixo de {limites.umidade_solo_minima_critica}%
             </p>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
+          <div className="text-slate-400">
             <Sprout className="w-7 h-7" />
           </div>
         </div>
@@ -279,7 +325,7 @@ export default function ClimaDashboard() {
       {/* Gráfico Principal (Recharts) */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-800">
+          <h2 className="text-[15px] font-semibold text-slate-900">
             Histórico de Sensores ({dadosFiltrados.length} registros exibidos)
           </h2>
           {apenasCriticos && (
@@ -296,65 +342,28 @@ export default function ClimaDashboard() {
               : "Aguardando leituras do simulador IoT..."}
           </div>
         ) : (
-          <div className="h-80 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={dadosFiltrados}
-                margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="horaFormatada" tick={{ fontSize: 12 }} stroke="#64748b" />
-                <YAxis tick={{ fontSize: 12 }} stroke="#64748b" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#fff",
-                    borderRadius: "8px",
-                    border: "1px solid #e2e8f0",
-                  }}
-                />
-                <Legend />
-                {/* Linhas de referência visual dos limiares críticos */}
-                <ReferenceLine
-                  y={limites.temperatura_max_critica}
-                  stroke="#ef4444"
-                  strokeDasharray="4 4"
-                  label={{ value: `Máx Temp (${limites.temperatura_max_critica}°C)`, fill: "#ef4444", fontSize: 10 }}
-                />
-                <ReferenceLine
-                  y={limites.umidade_solo_minima_critica}
-                  stroke="#10b981"
-                  strokeDasharray="4 4"
-                  label={{ value: `Mín Solo (${limites.umidade_solo_minima_critica}%)`, fill: "#059669", fontSize: 10 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="temperatura_ar"
-                  name="Temp. Ar (°C)"
-                  stroke="#ea580c"
-                  strokeWidth={2.5}
-                  dot={{ r: 4 }}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="umidade_ar"
-                  name="Umidade Ar (%)"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="umidade_solo"
-                  name="Umidade Solo (%)"
-                  stroke="#059669"
-                  strokeWidth={2.5}
-                  dot={{ r: 4 }}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="space-y-5">
+            <FaixaSensor
+              dados={dadosFiltrados}
+              chave="temperatura_ar"
+              titulo="Temperatura do ar"
+              unidade="°C"
+              cor={SERIES[3]}
+              limite={limites.temperatura_max_critica}
+              rotuloLimite={`crítico acima de ${limites.temperatura_max_critica} °C`}
+              limiteEhMaximo
+            />
+            <FaixaSensor dados={dadosFiltrados} chave="umidade_ar" titulo="Umidade do ar" unidade="%" cor={SERIES[2]} />
+            <FaixaSensor
+              dados={dadosFiltrados}
+              chave="umidade_solo"
+              titulo="Umidade do solo"
+              unidade="%"
+              cor={SERIES[0]}
+              limite={limites.umidade_solo_minima_critica}
+              rotuloLimite={`crítico abaixo de ${limites.umidade_solo_minima_critica}%`}
+              mostrarHoras
+            />
           </div>
         )}
       </div>
@@ -364,7 +373,7 @@ export default function ClimaDashboard() {
         <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-slate-800">
+            <h2 className="text-[15px] font-semibold text-slate-900">
               Alertas Disparados pela Automação
             </h2>
             {alertas.length > 0 && (

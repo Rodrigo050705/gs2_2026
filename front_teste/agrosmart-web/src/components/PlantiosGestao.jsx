@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina } from "./ui";
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const DIA_MS = 24 * 60 * 60 * 1000;
 
@@ -24,7 +25,7 @@ const ESTILO_FASE = {
   Inicial: "bg-sky-50 text-sky-700 border-sky-200",
   Desenvolvimento: "bg-emerald-50 text-emerald-700 border-emerald-200",
   "Pré-colheita": "bg-amber-50 text-amber-700 border-amber-200",
-  "Em colheita": "bg-orange-50 text-orange-700 border-orange-200",
+  "Em colheita": "bg-amber-50 text-amber-800 border-amber-200",
   Colhido: "bg-slate-100 text-slate-600 border-slate-200",
   Perdido: "bg-red-50 text-red-700 border-red-200",
 };
@@ -53,14 +54,20 @@ function LinhaDoTempo({ plantios }) {
 
   const marcosMes = [];
   for (let d = new Date(inicio.getFullYear(), inicio.getMonth() + 1, 1); d < fim; d.setMonth(d.getMonth() + 1)) {
-    marcosMes.push({ left: pos(d), label: `${MESES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}` });
+    // O ano só aparece no primeiro mês e quando vira o ano, para os rótulos caberem no celular
+    const comAno = marcosMes.length === 0 || d.getMonth() === 0;
+    marcosMes.push({
+      chave: `${d.getFullYear()}-${d.getMonth()}`,
+      left: pos(d),
+      label: comAno ? `${MESES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}` : MESES[d.getMonth()],
+    });
   }
 
   return (
     <div className="space-y-2">
-      <div className="relative h-5 ml-32 text-[10px] text-slate-400">
+      <div className="relative h-5 sm:ml-32 text-[11px] text-slate-500">
         {marcosMes.map((m) => (
-          <span key={m.label} className="absolute -translate-x-1/2" style={{ left: `${m.left}%` }}>
+          <span key={m.chave} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: `${m.left}%` }}>
             {m.label}
           </span>
         ))}
@@ -70,37 +77,38 @@ function LinhaDoTempo({ plantios }) {
         const iniCol = paraData(p.inicio_colheita_previsto);
         const fimCol = paraData(p.fim_colheita_previsto);
         return (
-          <div key={p.id} className="flex items-center gap-2">
-            <div className="w-30 shrink-0 text-xs truncate">
+          // No celular o nome vai em cima da barra, que fica com a largura toda
+          <div key={p.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <div className="sm:w-30 shrink-0 text-xs truncate">
               <span className="font-medium text-slate-700">{p.cultura}</span>
               <span className="text-slate-400"> · {p.talhao}</span>
             </div>
-            <div className="relative flex-1 h-6 bg-slate-50 rounded border border-slate-100">
+            <div className="relative h-6 w-full shrink-0 sm:w-auto sm:flex-1 bg-slate-50 rounded border border-slate-100">
               {marcosMes.map((m) => (
-                <div key={m.label} className="absolute top-0 bottom-0 border-l border-slate-200" style={{ left: `${m.left}%` }} />
+                <div key={m.chave} className="absolute top-0 bottom-0 border-l border-slate-200" style={{ left: `${m.left}%` }} />
               ))}
               {/* Crescimento */}
               <div
-                className="absolute top-1 bottom-1 rounded-l bg-emerald-200"
+                className="absolute top-1 bottom-1 rounded-l-[4px] bg-emerald-300"
                 style={{ left: `${pos(plantio)}%`, width: `${pos(iniCol) - pos(plantio)}%` }}
                 title={`Crescimento: ${formatarData(p.data_plantio)} → ${formatarData(p.inicio_colheita_previsto)}`}
               />
               {/* Janela de colheita */}
               <div
-                className="absolute top-1 bottom-1 rounded-r bg-orange-400"
+                className="absolute top-1 bottom-1 rounded-r-[4px] border-l-2 border-white bg-sol"
                 style={{ left: `${pos(iniCol)}%`, width: `${Math.max(pos(fimCol) - pos(iniCol), 0.6)}%` }}
                 title={`Colheita: ${formatarData(p.inicio_colheita_previsto)} → ${formatarData(p.fim_colheita_previsto)}`}
               />
               {/* Hoje */}
-              <div className="absolute -top-1 -bottom-1 border-l-2 border-red-500" style={{ left: `${pos(hoje)}%` }} />
+              <div className="absolute -top-1 -bottom-1 border-l-2 border-slate-900" style={{ left: `${pos(hoje)}%` }} />
             </div>
           </div>
         );
       })}
-      <div className="flex flex-wrap items-center gap-4 ml-32 pt-1 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-200" /> Crescimento</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400" /> Janela de colheita</span>
-        <span className="flex items-center gap-1.5"><span className="w-0.5 h-3 bg-red-500" /> Hoje</span>
+      <div className="flex flex-wrap items-center gap-4 sm:ml-32 pt-1 text-xs text-slate-500">
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-[3px] bg-emerald-300" /> Crescimento</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-[3px] bg-sol" /> Janela de colheita</span>
+        <span className="flex items-center gap-1.5"><span className="w-0.5 h-3 bg-slate-900" /> Hoje</span>
       </div>
     </div>
   );
@@ -203,7 +211,7 @@ function FichaTecnicaModal({ cultura, onFechar }) {
                     <span
                       key={m}
                       className={`text-[11px] px-1.5 py-0.5 rounded ${
-                        ficha.meses_plantio?.includes(i + 1) ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-400"
+                        ficha.meses_plantio?.includes(i + 1) ? "bg-emerald-900 text-white" : "bg-slate-100 text-slate-400"
                       }`}
                     >
                       {m}
@@ -359,31 +367,27 @@ export default function PlantiosGestao() {
     "w-full text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-emerald-500";
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Plantios & Calendário de Colheita</h1>
-          <p className="text-sm text-slate-500">Talhões, fases das culturas e janelas de colheita previstas</p>
-        </div>
+      <CabecalhoPagina sobretitulo="Produção" titulo="Plantios & Calendário de Colheita" descricao="Talhões, fases das culturas e janelas de colheita previstas">
         {erroConexao && (
           <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 self-start">
             Sem conexão com a API
           </span>
         )}
-      </div>
+      </CabecalhoPagina>
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { titulo: "Plantios ativos", valor: kpis.ativos, icone: Sprout, cor: "bg-emerald-50 text-emerald-600" },
-          { titulo: "Colheitas em 14 dias", valor: kpis.colheita14d, icone: CalendarDays, cor: "bg-orange-50 text-orange-600" },
-          { titulo: "Área em uso", valor: `${kpis.area.toLocaleString("pt-BR")} m²`, icone: Ruler, cor: "bg-blue-50 text-blue-600" },
+          { titulo: "Plantios ativos", valor: kpis.ativos, icone: Sprout, cor: "text-slate-400" },
+          { titulo: "Colheitas em 14 dias", valor: kpis.colheita14d, icone: CalendarDays, cor: "text-slate-400" },
+          { titulo: "Área em uso", valor: `${kpis.area.toLocaleString("pt-BR")} m²`, icone: Ruler, cor: "text-slate-400" },
           {
             titulo: "Atrasados",
             valor: kpis.atrasados,
             icone: AlertTriangle,
-            cor: kpis.atrasados ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-500",
+            cor: kpis.atrasados ? "text-red-600" : "text-slate-400",
           },
         ].map(({ titulo, valor, icone: Icone, cor }) => (
           <div key={titulo} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
@@ -391,7 +395,7 @@ export default function PlantiosGestao() {
               <p className="text-sm font-medium text-slate-500">{titulo}</p>
               <p className="text-2xl font-bold text-slate-800 mt-1">{valor}</p>
             </div>
-            <div className={`p-3 rounded-lg ${cor}`}>
+            <div className={cor}>
               <Icone className="w-6 h-6" />
             </div>
           </div>
@@ -400,7 +404,7 @@ export default function PlantiosGestao() {
 
       {/* Linha do tempo */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800 mb-4">Calendário dos plantios ativos</h2>
+        <h2 className="text-[15px] font-semibold text-slate-900 mb-4">Calendário dos plantios ativos</h2>
         {ativos.length === 0 ? (
           <p className="text-sm text-slate-400">Nenhum plantio em andamento.</p>
         ) : (
@@ -413,7 +417,7 @@ export default function PlantiosGestao() {
         <form onSubmit={criarPlantio} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-3 self-start">
           <div className="flex items-center gap-2 mb-1">
             <Plus className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-800">Novo plantio</h2>
+            <h2 className="text-[15px] font-semibold text-slate-900">Novo plantio</h2>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -446,7 +450,7 @@ export default function PlantiosGestao() {
               </p>
               <p>Época na região: {fichaDoForm.epoca_plantio_regiao}</p>
               {!fichaDoForm.meses_plantio.includes(Number(form.data_plantio.slice(5, 7))) && (
-                <p className="text-amber-700 font-medium">⚠️ A data escolhida está fora da época recomendada.</p>
+                <p className="text-amber-700 font-medium">Atenção: a data escolhida está fora da época recomendada.</p>
               )}
               {!form.ciclo_dias && (
                 <button
@@ -574,7 +578,7 @@ export default function PlantiosGestao() {
                 key={op.valor}
                 onClick={() => setFiltro(op.valor)}
                 className={`px-3 py-1.5 transition-colors ${
-                  filtro === op.valor ? "bg-emerald-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+                  filtro === op.valor ? "bg-emerald-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
                 }`}
               >
                 {op.label}
@@ -616,7 +620,7 @@ export default function PlantiosGestao() {
                   </div>
                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${p.progresso_percentual >= 100 ? "bg-orange-400" : "bg-emerald-500"}`}
+                      className={`h-full rounded-full ${p.progresso_percentual >= 100 ? "bg-sol" : "bg-emerald-700"}`}
                       style={{ width: `${p.progresso_percentual}%` }}
                     />
                   </div>

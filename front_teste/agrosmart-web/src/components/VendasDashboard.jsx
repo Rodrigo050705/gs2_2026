@@ -6,7 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
+  LabelList,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -20,8 +20,10 @@ import {
 } from "lucide-react";
 
 import { API_BASE_URL } from "../api";
+import { CabecalhoPagina } from "./ui";
+import { SERIES, COR_OUTROS, TINTA, EIXO, EIXO_Y, GRADE, CURSOR_BARRA, emMil } from "./temaGraficos";
+import { Dica, Legenda } from "./graficos";
 const CANAIS = ["Feira", "Mercado local", "CEASA", "Delivery", "Outro"];
-const CORES_PRODUTOS = ["#059669", "#ea580c", "#2563eb", "#d97706", "#7c3aed", "#db2777", "#0891b2"];
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 const formatarMoeda = (valor) =>
@@ -83,16 +85,26 @@ export default function VendasDashboard() {
     };
   }, [resumo]);
 
-  // receita_mensal { "2026-06": { Tomate: 123, ... } } -> [{ mes: "jun/26", Tomate: 123, ... }]
-  const { dadosMensais, nomesProdutos } = useMemo(() => {
-    if (!resumo?.receita_mensal) return { dadosMensais: [], nomesProdutos: [] };
-    const nomes = new Set();
+  // receita_mensal { "2026-06": { Tomate: 123, ... } } -> [{ mes: "jun/26", Tomate: 123, ..., total }]
+  // Cada produto tem uma cor fixa, pela ordem do nome. Acima de 8 produtos, a cauda vira "Outros".
+  const { dadosMensais, seriesMensais } = useMemo(() => {
+    if (!resumo?.receita_mensal) return { dadosMensais: [], seriesMensais: [] };
+    const nomes = [...new Set(Object.values(resumo.receita_mensal).flatMap((porProduto) => Object.keys(porProduto)))].sort();
+    const comCor = nomes.length > SERIES.length ? nomes.slice(0, SERIES.length - 1) : nomes;
+    const series = comCor.map((nome, i) => ({ nome, cor: SERIES[i] }));
+    if (comCor.length < nomes.length) series.push({ nome: "Outros", cor: COR_OUTROS });
+    const mesAtual = hojeISO().slice(0, 7);
     const dados = Object.entries(resumo.receita_mensal).map(([mes, porProduto]) => {
-      Object.keys(porProduto).forEach((n) => nomes.add(n));
       const [ano, m] = mes.split("-");
-      return { mes: `${MESES[Number(m) - 1]}/${ano.slice(2)}`, ...porProduto };
+      const linha = { mes: `${MESES[Number(m) - 1]}/${ano.slice(2)}${mes === mesAtual ? "*" : ""}`, total: 0 };
+      Object.entries(porProduto).forEach(([nome, valor]) => {
+        const chave = comCor.includes(nome) ? nome : "Outros";
+        linha[chave] = (linha[chave] || 0) + valor;
+        linha.total += valor;
+      });
+      return linha;
     });
-    return { dadosMensais: dados, nomesProdutos: [...nomes].sort() };
+    return { dadosMensais: dados, seriesMensais: series };
   }, [resumo]);
 
   const atualizarCampo = (campo, valor) => setForm((f) => ({ ...f, [campo]: valor }));
@@ -139,21 +151,15 @@ export default function VendasDashboard() {
     "w-full text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-emerald-500";
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Vendas</h1>
-          <p className="text-sm text-slate-500">
-            Registro de vendas, lucro realizado, tendência e sazonalidade por produto
-          </p>
-        </div>
+      <CabecalhoPagina sobretitulo="Comercial" titulo="Vendas" descricao="Registro de vendas, lucro realizado, tendência e sazonalidade por produto">
         {erroConexao && (
           <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 self-start">
             Sem conexão com a API
           </span>
         )}
-      </div>
+      </CabecalhoPagina>
 
       {/* Filtro de período */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
@@ -167,7 +173,7 @@ export default function VendasDashboard() {
               key={d}
               onClick={() => setPeriodo(d)}
               className={`px-3 py-1.5 transition-colors ${
-                periodo === d ? "bg-emerald-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+                periodo === d ? "bg-emerald-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
               }`}
             >
               Últimos {d} dias
@@ -179,10 +185,10 @@ export default function VendasDashboard() {
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { titulo: "Receita", valor: formatarMoeda(kpis?.receita), icone: DollarSign, cor: "bg-emerald-50 text-emerald-600" },
-          { titulo: "Lucro realizado", valor: formatarMoeda(kpis?.lucro), icone: TrendingUp, cor: "bg-blue-50 text-blue-600" },
-          { titulo: "Margem realizada", valor: kpis ? `${kpis.margem.toFixed(1)}%` : "--", icone: Percent, cor: "bg-amber-50 text-amber-600" },
-          { titulo: "Nº de vendas", valor: kpis ? kpis.numVendas : "--", icone: ShoppingCart, cor: "bg-slate-100 text-slate-600" },
+          { titulo: "Receita", valor: formatarMoeda(kpis?.receita), icone: DollarSign, cor: "text-slate-400" },
+          { titulo: "Lucro realizado", valor: formatarMoeda(kpis?.lucro), icone: TrendingUp, cor: "text-slate-400" },
+          { titulo: "Margem realizada", valor: kpis ? `${kpis.margem.toFixed(1)}%` : "--", icone: Percent, cor: "text-slate-400" },
+          { titulo: "Nº de vendas", valor: kpis ? kpis.numVendas : "--", icone: ShoppingCart, cor: "text-slate-400" },
         ].map(({ titulo, valor, icone: Icone, cor }) => (
           <div key={titulo} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
@@ -190,7 +196,7 @@ export default function VendasDashboard() {
               <p className="text-2xl font-bold text-slate-800 mt-1">{valor}</p>
               <p className="text-xs text-slate-400 mt-1">Últimos {periodo} dias</p>
             </div>
-            <div className={`p-3 rounded-lg ${cor}`}>
+            <div className={cor}>
               <Icone className="w-6 h-6" />
             </div>
           </div>
@@ -202,7 +208,7 @@ export default function VendasDashboard() {
         <form onSubmit={registrarVenda} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-3">
           <div className="flex items-center gap-2 mb-1">
             <Plus className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-800">Registrar venda</h2>
+            <h2 className="text-[15px] font-semibold text-slate-900">Registrar venda</h2>
           </div>
 
           <div>
@@ -314,7 +320,7 @@ export default function VendasDashboard() {
 
         {/* Ranking por produto */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">Desempenho por produto</h2>
+          <h2 className="text-[15px] font-semibold text-slate-900 mb-4">Desempenho por produto</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -378,22 +384,50 @@ export default function VendasDashboard() {
 
       {/* Receita mensal (sazonalidade) */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">Receita mensal por produto</h2>
-        <p className="text-xs text-slate-500 mb-4">Últimos 6 meses — mostra os meses fortes e fracos de cada produto</p>
-        <div className="h-80 w-full">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div>
+            <h2 className="text-[15px] font-semibold text-slate-900">Receita mensal por produto</h2>
+            <p className="text-xs text-slate-500">
+              Últimos 6 meses, em R$. O número no topo de cada coluna é o total do mês
+              {dadosMensais.some((d) => d.mes.endsWith("*")) && " (* mês em andamento)"}
+            </p>
+          </div>
+          <Legenda itens={seriesMensais} />
+        </div>
+        <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={dadosMensais} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="mes" tick={{ fontSize: 12 }} stroke="#64748b" />
-              <YAxis tick={{ fontSize: 12 }} stroke="#64748b" tickFormatter={(v) => `R$${Math.round(v / 100) / 10}k`} />
-              <Tooltip
-                formatter={(v) => formatarMoeda(v)}
-                contentStyle={{ backgroundColor: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0" }}
-              />
-              <Legend />
-              {nomesProdutos.map((nome, i) => (
-                <Bar key={nome} dataKey={nome} stackId="receita" fill={CORES_PRODUTOS[i % CORES_PRODUTOS.length]} />
-              ))}
+            <BarChart data={dadosMensais} margin={{ top: 24, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid {...GRADE} />
+              {/* No eixo só o mês ("jun"); o ano aparece na caixinha do mouse ("jun/26") */}
+              <XAxis dataKey="mes" {...EIXO} interval={0} tickFormatter={(m) => m.split("/")[0] + (m.endsWith("*") ? "*" : "")} />
+              <YAxis {...EIXO_Y} width={52} tickFormatter={emMil} />
+              <Tooltip cursor={CURSOR_BARRA} content={<Dica formatar={formatarMoeda} mostrarTotal inverter />} />
+              {seriesMensais.map(({ nome, cor }, i) => {
+                const topo = i === seriesMensais.length - 1;
+                return (
+                  <Bar
+                    key={nome}
+                    dataKey={nome}
+                    stackId="receita"
+                    fill={cor}
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                    maxBarSize={28}
+                    radius={topo ? [4, 4, 0, 0] : 0}
+                    isAnimationActive={false}
+                  >
+                    {topo && (
+                      <LabelList
+                        dataKey="total"
+                        position="top"
+                        offset={8}
+                        formatter={(v) => Math.round(v).toLocaleString("pt-BR")}
+                        style={{ fill: TINTA.forte, fontSize: 12, fontWeight: 600 }}
+                      />
+                    )}
+                  </Bar>
+                );
+              })}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -401,7 +435,7 @@ export default function VendasDashboard() {
 
       {/* Últimas vendas */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800 mb-4">Últimas vendas</h2>
+        <h2 className="text-[15px] font-semibold text-slate-900 mb-4">Últimas vendas</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

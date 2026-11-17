@@ -1,12 +1,15 @@
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import time as _time
 import unicodedata
 from pathlib import Path
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Literal, Optional
 import requests
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, text, Column, Integer, Float, String, DateTime, Date, Boolean
@@ -161,6 +164,27 @@ class ChatInteracaoDB(Base):
     comentario = Column(String, nullable=True)     # o que faltou (opcional, junto do 👎)
     tela = Column(String, nullable=True)           # aba em que o produtor estava ao perguntar
     criado_em = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class UsuarioDB(Base):
+    """Quem pode entrar no painel. A senha nunca é guardada: só o hash scrypt (ver seção 4b)."""
+    __tablename__ = "usuarios"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario = Column(String, unique=True, index=True, nullable=False)  # login, em minúsculas
+    nome = Column(String, nullable=True)
+    senha_hash = Column(String, nullable=False)
+    ativo = Column(Boolean, default=True)
+    criado_em = Column(DateTime, default=datetime.utcnow)
+
+
+class SessaoDB(Base):
+    """Sessão aberta no login. O cookie leva o token; aqui fica só o SHA-256 dele."""
+    __tablename__ = "sessoes"
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    usuario_id = Column(Integer, index=True, nullable=False)
+    criado_em = Column(DateTime, default=datetime.utcnow)
+    expira_em = Column(DateTime, nullable=False, index=True)
 
 
 Base.metadata.create_all(bind=engine)
@@ -621,15 +645,187 @@ def avaliar_regras_automacao(db: Session, leitura: TelemetriaInput):
 # ==========================================
 # 5. APLICAÇÃO E ENDPOINTS FASTAPI
 # ==========================================
-app = FastAPI(title="AgroSmart API - Telemetria, Estoque & Inteligência", version="1.1.0")
+# --- 4b. AUTENTICAÇÃO ----------------------------------------------------------------------
+# Login com usuário e senha → cookie de sessão HttpOnly (o JavaScript não lê), Secure e
+# SameSite=Strict (não vai em requisições de outros sites, o que fecha CSRF). Front e API estão
+# na mesma origem (o nginx repassa /api/), então o navegador manda o cookie sozinho.
+# Toda rota /api/* exige sessão, menos o login. A telemetria aceita também o token do dispositivo
+# (TELEMETRIA_TOKEN, no header X-Dispositivo-Token), usado pelo simulador/sensores.
+COOKIE_SESSAO = "agrosmart_sessao"
+DURACAO_SESSAO = timedelta(days=int(os.getenv("SESSAO_DIAS", "7")))
+# Só "false" em testes (o cliente de teste fala http). Navegadores aceitam Secure em localhost.
+COOKIE_SEGURO = os.getenv("COOKIE_SEGURO", "true").lower() != "false"
+SENHA_MIN = 10
+# Bloqueio por usuário após muitas senhas erradas (em memória: zera se a API reiniciar).
+LIMITE_FALHAS = 5
+JANELA_FALHAS = timedelta(minutes=15)
+_falhas_login: dict = {}
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# scrypt (stdlib): n=2^14, r=8, p=1 → ~16 MB e dezenas de ms por tentativa.
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+
+
+def gerar_hash_senha(senha: str) -> str:
+    sal = secrets.token_bytes(16)
+    dk = hashlib.scrypt(senha.encode("utf-8"), salt=sal, dklen=32, maxmem=64 * 1024 * 1024, **_SCRYPT)
+    return f"scrypt${_SCRYPT['n']}${_SCRYPT['r']}${_SCRYPT['p']}${sal.hex()}${dk.hex()}"
+
+
+def conferir_senha(senha: str, senha_hash: str) -> bool:
+    try:
+        algoritmo, n, r, p, sal, esperado = senha_hash.split("$")
+        if algoritmo != "scrypt":
+            return False
+        dk = hashlib.scrypt(senha.encode("utf-8"), salt=bytes.fromhex(sal), n=int(n), r=int(r), p=int(p),
+                            dklen=len(esperado) // 2, maxmem=64 * 1024 * 1024)
+        return hmac.compare_digest(dk.hex(), esperado)
+    except (ValueError, TypeError):
+        return False
+
+
+# Hash de referência: o login de usuário inexistente gasta o mesmo tempo (não revela quem existe).
+_HASH_FICTICIO = gerar_hash_senha(secrets.token_hex(16))
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def criar_usuario(db: Session, usuario: str, senha: str, nome: Optional[str] = None) -> UsuarioDB:
+    usuario = usuario.strip().lower()
+    if not usuario:
+        raise ValueError("Informe o usuário.")
+    if len(senha) < SENHA_MIN:
+        raise ValueError(f"A senha precisa ter pelo menos {SENHA_MIN} caracteres.")
+    if db.query(UsuarioDB).filter(UsuarioDB.usuario == usuario).first():
+        raise ValueError(f"O usuário '{usuario}' já existe.")
+    novo = UsuarioDB(usuario=usuario, nome=nome or usuario, senha_hash=gerar_hash_senha(senha))
+    db.add(novo)
+    db.commit()
+    db.refresh(novo)
+    return novo
+
+
+def inicializar_admin():
+    """Primeira subida: cria o administrador a partir de ADMIN_USUARIO e ADMIN_SENHA (segredos em
+    /run/secrets nos ambientes, back/.env em dev). Só age enquanto não houver nenhum usuário."""
+    usuario, senha = os.getenv("ADMIN_USUARIO"), os.getenv("ADMIN_SENHA")
+    if not usuario or not senha:
+        return
+    db = SessionLocal()
+    try:
+        if db.query(UsuarioDB).count() == 0:
+            criar_usuario(db, usuario, senha, nome="Administrador")
+    finally:
+        db.close()
+
+
+inicializar_admin()
+
+
+def usuario_da_sessao(request: Request, db: Session) -> Optional[UsuarioDB]:
+    token = request.cookies.get(COOKIE_SESSAO)
+    if not token:
+        return None
+    sessao = db.query(SessaoDB).filter(SessaoDB.token_hash == _hash_token(token)).first()
+    if not sessao or sessao.expira_em < datetime.utcnow():
+        return None
+    usuario = db.get(UsuarioDB, sessao.usuario_id)
+    return usuario if usuario and usuario.ativo else None
+
+
+ROTAS_PUBLICAS = {"/health", "/api/v1/auth/login"}
+
+
+def exigir_autenticacao(request: Request, db: Session = Depends(get_db)):
+    """Dependência global: aplicada a todas as rotas da API (ver FastAPI(dependencies=...))."""
+    if request.url.path in ROTAS_PUBLICAS:
+        return
+    if request.url.path == "/api/v1/telemetria" and request.method == "POST":
+        esperado = os.getenv("TELEMETRIA_TOKEN")
+        recebido = request.headers.get("X-Dispositivo-Token")
+        if esperado and recebido and hmac.compare_digest(recebido.encode(), esperado.encode()):
+            return
+    usuario = usuario_da_sessao(request, db)
+    if usuario is None:
+        raise HTTPException(status_code=401, detail="Faça login para continuar.")
+    request.state.usuario = usuario
+
+
+app = FastAPI(
+    title="AgroSmart API - Telemetria, Estoque & Inteligência",
+    version="1.2.0",
+    dependencies=[Depends(exigir_autenticacao)],
+    # A documentação interativa fica só em dev (o nginx também não repassa /docs).
+    docs_url="/docs" if os.getenv("API_DOCS", "false").lower() == "true" else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if os.getenv("API_DOCS", "false").lower() == "true" else None,
 )
+
+# Front e API na mesma origem: CORS só se alguém apontar outro front para esta API
+# (CORS_ORIGENS="https://a.com,https://b.com"). Nunca "*" com cookies.
+_origens = [o.strip() for o in os.getenv("CORS_ORIGENS", "").split(",") if o.strip()]
+if _origens:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origens,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+class LoginInput(BaseModel):
+    usuario: str = Field(min_length=1, max_length=100)
+    senha: str = Field(min_length=1, max_length=200)
+
+
+def _usuario_para_dict(u: UsuarioDB) -> dict:
+    return {"id": u.id, "usuario": u.usuario, "nome": u.nome}
+
+
+@app.post("/api/v1/auth/login")
+def login(payload: LoginInput, response: Response, db: Session = Depends(get_db)):
+    chave = payload.usuario.strip().lower()
+    agora = datetime.utcnow()
+    falhas = [t for t in _falhas_login.get(chave, []) if agora - t < JANELA_FALHAS]
+    if len(falhas) >= LIMITE_FALHAS:
+        raise HTTPException(status_code=429, detail="Muitas tentativas. Aguarde alguns minutos e tente de novo.")
+
+    usuario = db.query(UsuarioDB).filter(UsuarioDB.usuario == chave).first()
+    senha_ok = conferir_senha(payload.senha, usuario.senha_hash if usuario else _HASH_FICTICIO)
+    if not usuario or not usuario.ativo or not senha_ok:
+        _falhas_login[chave] = falhas + [agora]
+        raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    _falhas_login.pop(chave, None)
+
+    # Limpa sessões vencidas de vez em quando (aqui mesmo, sem tarefa agendada).
+    db.query(SessaoDB).filter(SessaoDB.expira_em < agora).delete()
+    token = secrets.token_urlsafe(32)
+    db.add(SessaoDB(token_hash=_hash_token(token), usuario_id=usuario.id, expira_em=agora + DURACAO_SESSAO))
+    db.commit()
+    response.set_cookie(
+        COOKIE_SESSAO, token,
+        max_age=int(DURACAO_SESSAO.total_seconds()),
+        httponly=True, secure=COOKIE_SEGURO, samesite="strict", path="/",
+    )
+    return _usuario_para_dict(usuario)
+
+
+@app.post("/api/v1/auth/logout", status_code=204)
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    token = request.cookies.get(COOKIE_SESSAO)
+    if token:
+        db.query(SessaoDB).filter(SessaoDB.token_hash == _hash_token(token)).delete()
+        db.commit()
+    response.delete_cookie(COOKIE_SESSAO, path="/", httponly=True, secure=COOKIE_SEGURO, samesite="strict")
+    response.status_code = 204
+    return response
+
+
+@app.get("/api/v1/auth/me")
+def quem_sou_eu(request: Request):
+    return _usuario_para_dict(request.state.usuario)
 
 
 @app.get("/health")

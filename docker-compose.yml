@@ -1,9 +1,10 @@
 # Stack local com Docker: builda as imagens a partir do código (para dev/teste).
-# Os ambientes de verdade (hml/prod) ficam no gtlabs-deploy e só puxam as imagens do GHCR.
+# A produção (deploy/prod) só puxa as imagens do GHCR.
 #
 #   docker compose up --build        → http://localhost:8080
 #
-# A chave da IA vem de back/.env (GEMINI_API_KEY=...). Sem ela tudo funciona, menos o chat.
+# back/.env: GEMINI_API_KEY (sem ela tudo funciona, menos o chat), ADMIN_USUARIO/ADMIN_SENHA
+# (primeiro login) e TELEMETRIA_TOKEN (simulador).
 
 name: agrosmart-local
 
@@ -26,6 +27,10 @@ services:
       dockerfile: back/Dockerfile
     restart: unless-stopped
     command: ["python", "/app/iot-simulator/iot_simulator.py", "--url", "http://api:8000/api/v1/telemetria"]
+    # TELEMETRIA_TOKEN, para a API aceitar as leituras.
+    env_file:
+      - path: back/.env
+        required: false
     depends_on:
       api:
         condition: service_healthy

@@ -1,11 +1,16 @@
 name: agrosmart-prod
 
-# Produção do AgroSmart, acompanhada pelo Portainer (stack de Git, polling). Ver docs/cicd.md.
+# Produção do AgroSmart no infra.home, acompanhada pelo Portainer (stack de Git, polling).
+# Não há homologação: cada merge na main troca as imagens daqui (job deploy-prod do CI).
+# Uma porta só: o nginx do "web" serve o front e repassa /api/ para o serviço "api" pela rede
+# interna da stack. Ver docs/cicd.md.
+#
+# Segredos em /etc/docker/containers/agrosmart-prod/segredos, um arquivo por chave, dono 1654,
+# chmod 400: GEMINI_API_KEY, ADMIN_USUARIO, ADMIN_SENHA e TELEMETRIA_TOKEN.
 
 services:
   api:
-    # Trocada por PR do CI (tag vX.Y.Z). O merge do PR é a aprovação.
-    # Antes da primeira versão, use aqui uma imagem sha-… que já esteja na homologação.
+    # Trocada pelo CI (job deploy-prod) a cada merge na main. Não editar à mão, salvo num rollback.
     image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
     restart: unless-stopped
     environment:
@@ -22,9 +27,12 @@ services:
 
   simulador:
     # Dados de sensores de demonstração. Remova quando houver sensores reais enviando telemetria.
+    # Lê o TELEMETRIA_TOKEN dos mesmos segredos para poder enviar leituras à API.
     image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
     restart: unless-stopped
     command: ["python", "/app/iot-simulator/iot_simulator.py", "--url", "http://api:8000/api/v1/telemetria"]
+    volumes:
+      - /etc/docker/containers/agrosmart-prod/segredos:/run/secrets:ro
     depends_on:
       api:
         condition: service_healthy

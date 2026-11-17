@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { RefreshCw, Menu, X, MapPin } from "lucide-react";
+import { RefreshCw, Menu, X, MapPin, LogOut } from "lucide-react";
 import VisaoGeral from "./components/VisaoGeral";
 import ClimaDashboard from "./components/ClimaDashboard";
 import ComercialDashboard from "./components/ComercialDashboard";
@@ -9,7 +9,8 @@ import PlantiosGestao from "./components/PlantiosGestao";
 import ChatWidget from "./components/ChatWidget";
 import AssistenteInsights from "./components/AssistenteInsights";
 import Logo from "./components/Logo";
-import { API_BASE_URL } from "./api";
+import Login from "./components/Login";
+import { API_BASE_URL, EVENTO_SESSAO_EXPIRADA, obterUsuarioAtual, sair } from "./api";
 
 // `curto` aparece no menu; `label` é o nome completo da tela (o chat mostra em qual tela você está)
 const ABAS = [
@@ -25,7 +26,49 @@ const ABAS = [
 // A API do chat só conhece as abas de dados; a Visão geral conversa sem contexto de tela
 const ABAS_DO_CHAT = new Set(["clima", "plantios", "vendas", "comercial", "estoque", "assistente"]);
 
+// Porta de entrada: confere a sessão (cookie HttpOnly) e mostra o login ou o painel.
 function App() {
+  // undefined = verificando a sessão; null = sem login; objeto = usuário logado
+  const [usuario, setUsuario] = useState(undefined);
+  const [aviso, setAviso] = useState("");
+
+  useEffect(() => {
+    obterUsuarioAtual().then(setUsuario).catch(() => setUsuario(null));
+    // Qualquer 401 da API (sessão vencida ou encerrada) volta para o login
+    const expirou = () => {
+      setUsuario((atual) => {
+        if (atual) setAviso("Sua sessão terminou. Entre de novo.");
+        return null;
+      });
+    };
+    window.addEventListener(EVENTO_SESSAO_EXPIRADA, expirou);
+    return () => window.removeEventListener(EVENTO_SESSAO_EXPIRADA, expirou);
+  }, []);
+
+  if (usuario === undefined) return <div className="min-h-screen" />;
+  if (!usuario) {
+    return (
+      <Login
+        aviso={aviso}
+        aoEntrar={(u) => {
+          setAviso("");
+          setUsuario(u);
+        }}
+      />
+    );
+  }
+  return (
+    <Painel
+      usuario={usuario}
+      aoSair={async () => {
+        await sair();
+        setUsuario(null);
+      }}
+    />
+  );
+}
+
+function Painel({ usuario, aoSair }) {
   const [abaAtiva, setAbaAtiva] = useState("visao");
   const [menuAberto, setMenuAberto] = useState(false);
   const [produtor, setProdutor] = useState(null);
@@ -105,6 +148,15 @@ function App() {
             >
               <RefreshCw className={`w-4 h-4 ${girando ? "animate-spin" : ""}`} strokeWidth={1.75} />
               <span className="hidden sm:inline">Atualizar</span>
+            </button>
+            <button
+              onClick={aoSair}
+              title={`Sair (${usuario.nome || usuario.usuario})`}
+              aria-label="Sair"
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            >
+              <LogOut className="w-4 h-4" strokeWidth={1.75} />
+              <span className="hidden md:inline">Sair</span>
             </button>
             <button
               onClick={() => setMenuAberto((m) => !m)}

@@ -11,7 +11,7 @@ name: agrosmart-prod
 services:
   api:
     # Trocada pelo CI (job deploy-prod) a cada merge na main. Não editar à mão, salvo num rollback.
-    image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-b076bef
     restart: unless-stopped
     environment:
       DATABASE_URL: sqlite:////data/agrosmart.db
@@ -28,7 +28,7 @@ services:
   simulador:
     # Dados de sensores de demonstração. Remova quando houver sensores reais enviando telemetria.
     # Lê o TELEMETRIA_TOKEN dos mesmos segredos para poder enviar leituras à API.
-    image: ghcr.io/rodrigo050705/agrosmart-api:sha-0000000
+    image: ghcr.io/rodrigo050705/agrosmart-api:sha-b076bef
     restart: unless-stopped
     command: ["python", "/app/iot-simulator/iot_simulator.py", "--url", "http://api:8000/api/v1/telemetria"]
     volumes:
@@ -40,7 +40,7 @@ services:
       disable: true
 
   web:
-    image: ghcr.io/rodrigo050705/agrosmart-web:sha-0000000
+    image: ghcr.io/rodrigo050705/agrosmart-web:sha-b076bef
     restart: unless-stopped
     depends_on:
       api:

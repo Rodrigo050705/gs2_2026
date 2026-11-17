@@ -16,6 +16,11 @@ _PASTA_TMP = tempfile.mkdtemp(prefix="agrosmart-testes-")
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(_PASTA_TMP, 'teste.db').as_posix()}"
 os.environ["SECRETS_DIR"] = str(Path(_PASTA_TMP, "sem-segredos"))
 os.environ.pop("GEMINI_API_KEY", None)
+# Autenticação: o cliente de teste fala http (cookie sem Secure) e o admin nasce destes valores.
+os.environ["COOKIE_SEGURO"] = "false"
+os.environ["ADMIN_USUARIO"] = "admin"
+os.environ["ADMIN_SENHA"] = "senha-de-teste-123"
+os.environ["TELEMETRIA_TOKEN"] = "token-de-teste"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # back/
 
@@ -49,5 +54,15 @@ def sem_internet(monkeypatch):
 
 
 @pytest.fixture()
-def cliente():
+def anonimo():
+    """Cliente sem login."""
     return TestClient(main.app)
+
+
+@pytest.fixture()
+def cliente():
+    """Cliente já logado como o admin (cookie de sessão)."""
+    c = TestClient(main.app)
+    resp = c.post("/api/v1/auth/login", json={"usuario": "admin", "senha": "senha-de-teste-123"})
+    assert resp.status_code == 200, resp.text
+    return c

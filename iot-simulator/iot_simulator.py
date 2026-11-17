@@ -1,13 +1,31 @@
 import argparse
 import math
+import os
 import random
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 import requests
 
 API_URL = "http://localhost:8000/api/v1/telemetria"
 SENSOR_ID = "estacao-campo-01"
 PRODUTOR_ID = 1
+
+
+def token_dispositivo() -> str:
+    """Token que autoriza o envio de telemetria (header X-Dispositivo-Token). Vem do arquivo
+    TELEMETRIA_TOKEN em /run/secrets (como na API) ou da variável de mesmo nome."""
+    arquivo = Path(os.getenv("SECRETS_DIR", "/run/secrets"), "TELEMETRIA_TOKEN")
+    if arquivo.is_file():
+        return arquivo.read_text(encoding="utf-8").strip()
+    if not os.getenv("TELEMETRIA_TOKEN"):
+        # Desenvolvimento: o mesmo back/.env da API.
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(Path(__file__).resolve().parents[1] / "back" / ".env")
+        except ImportError:
+            pass
+    return os.getenv("TELEMETRIA_TOKEN", "")
 
 
 def gerar_leitura(anomalia: bool = False) -> dict:
@@ -41,7 +59,7 @@ def gerar_leitura(anomalia: bool = False) -> dict:
 
 def enviar(payload: dict, url: str):
     try:
-        res = requests.post(url, json=payload, timeout=5)
+        res = requests.post(url, json=payload, headers={"X-Dispositivo-Token": token_dispositivo()}, timeout=5)
         if res.status_code in (200, 201):
             print(
                 f"[ENVIADO] Temp: {payload['temperatura_ar']}°C | "

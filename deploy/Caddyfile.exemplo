@@ -1,13 +1,9 @@
-# Sites para o Caddyfile da VM "proxy" (192.168.0.3).
-# Os nomes ficam um nível só abaixo de gtlabs.com.br (Universal SSL do Cloudflare).
-# Uma porta por ambiente: o nginx do serviço "web" serve o front e repassa /api/ para a API.
+# Site para o Caddyfile da VM "proxy" (192.168.0.3).
+# O nome fica um nível só abaixo de gtlabs.com.br (Universal SSL do Cloudflare).
+# Uma porta só: o nginx do serviço "web" serve o front e repassa /api/ para a API.
+# O login usa cookie Secure: o acesso precisa ser por HTTPS (Cloudflare + Caddy).
 
-# Homologação: atualizada a cada merge na main.
-agrosmart-hml.gtlabs.com.br {
-	reverse_proxy infra.home:8092
-}
-
-# Produção: atualizada pelo PR de versão (tag vX.Y.Z) no gtlabs-deploy.
+# Produção: atualizada a cada merge na main.
 agrosmart.gtlabs.com.br {
 	reverse_proxy infra.home:8093
 }

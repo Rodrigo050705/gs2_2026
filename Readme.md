@@ -19,10 +19,11 @@ contribuir. O desenho do CI/CD e do deploy está em [`docs/cicd.md`](docs/cicd.m
 7. [Rodar com Docker](#rodar-com-docker)
 8. [Demonstração: alertas da automação](#demonstração-alertas-da-automação)
 9. [Configuração (variáveis e segredos)](#configuração-variáveis-e-segredos)
-10. [API](#api)
-11. [Problemas comuns](#problemas-comuns)
-12. [Fluxo de contribuição e CI/CD](#fluxo-de-contribuição-e-cicd)
-13. [Equipe](#equipe)
+10. [Autenticação](#autenticação)
+11. [API](#api)
+12. [Problemas comuns](#problemas-comuns)
+13. [Fluxo de contribuição e CI/CD](#fluxo-de-contribuição-e-cicd)
+14. [Equipe](#equipe)
 
 ---
 
@@ -70,6 +71,7 @@ vendas, 6 plantios e uma propriedade em Atibaia-SP).
 .
 ├── back/                       # API (FastAPI + SQLAlchemy + SQLite)
 │   ├── main.py                 # toda a API: modelos, regras, endpoints e IA
+│   ├── usuarios.py             # gerencia os usuários do login (criar, senha, desativar)
 │   ├── dados/culturas.json     # ficha técnica das culturas (base de conhecimento da IA)
 │   ├── tests/                  # testes (pytest), sem acesso à internet
 │   ├── .env.example            # modelo do back/.env (chave do Gemini)
@@ -81,8 +83,7 @@ vendas, 6 plantios e uma propriedade em Atibaia-SP).
 │   └── Dockerfile
 ├── iot-simulator/              # simulador dos sensores (envia leituras a cada 5 s)
 ├── deploy/
-│   ├── hml/compose.yml         # homologação (Portainer) — imagem trocada pelo CI
-│   ├── prod/compose.yml        # produção (Portainer) — trocada por PR de versão
+│   ├── prod/compose.yml        # produção no infra.home (Portainer) — imagem trocada pelo CI
 │   └── local/                  # overrides para rodar os composes na sua máquina
 ├── docs/cicd.md                # CI/CD e deploy
 ├── docker-compose.yml          # stack local construída a partir do código
@@ -165,7 +166,14 @@ cp back/.env.example back/.env
 ```dotenv
 # back/.env  (nunca vai para o Git)
 GEMINI_API_KEY=sua-chave-aqui
+ADMIN_USUARIO=admin
+ADMIN_SENHA=uma-senha-com-10-ou-mais
+TELEMETRIA_TOKEN=um-token-qualquer-para-o-simulador
 ```
+
+O sistema exige **login**. Na primeira subida a API cria o usuário `ADMIN_USUARIO` com a senha
+`ADMIN_SENHA` (só enquanto o banco não tem nenhum usuário). O simulador manda o `TELEMETRIA_TOKEN`
+para poder enviar leituras. Veja [Autenticação](#autenticação).
 
 ---
 
@@ -174,7 +182,8 @@ GEMINI_API_KEY=sua-chave-aqui
 Três terminais, todos a partir da raiz do repositório e com o venv ativo. A API e o front recarregam
 sozinhos quando você salva um arquivo.
 
-**Terminal 1 — API** (http://127.0.0.1:8000, documentação interativa em http://127.0.0.1:8000/docs).
+**Terminal 1 — API** (http://127.0.0.1:8000; documentação interativa em http://127.0.0.1:8000/docs
+com `API_DOCS=true` no `back/.env`).
 Rode de dentro de `back/` (o banco `agrosmart.db` é criado na pasta atual):
 
 ```bash
@@ -262,20 +271,21 @@ docker compose -f deploy/prod/compose.yml -f deploy/local/compose.yml up
 
 Abre em **http://localhost:8093**.
 
-### c) Com as imagens publicadas no GHCR (as mesmas da homologação)
+### c) Com as imagens publicadas no GHCR (as mesmas da produção)
 
-Baixa as imagens que o CI publicou (a tag está em [`deploy/hml/compose.yml`](deploy/hml/compose.yml))
+Baixa as imagens que o CI publicou (a tag está em [`deploy/prod/compose.yml`](deploy/prod/compose.yml))
 e troca só a pasta de segredos, com o override [`deploy/local/segredos.yml`](deploy/local/segredos.yml).
 Os pacotes são públicos: não precisa de `docker login`.
 
 ```bash
-docker compose -f deploy/hml/compose.yml -f deploy/local/segredos.yml up
+docker compose -f deploy/prod/compose.yml -f deploy/local/segredos.yml up
 ```
 
-Abre em **http://localhost:8092**.
+Abre em **http://localhost:8093**.
 
-**Segredo para (b) e (c):** crie o arquivo `deploy/local/segredos/GEMINI_API_KEY` contendo só a
-chave, sem quebra de linha (a pasta está no `.gitignore`). Sem ele, tudo sobe, menos a IA.
+**Segredos para (b) e (c):** na pasta `deploy/local/segredos/` (está no `.gitignore`), um arquivo por
+chave, contendo só o valor, sem quebra de linha: `GEMINI_API_KEY`, `ADMIN_USUARIO`, `ADMIN_SENHA` e
+`TELEMETRIA_TOKEN`. Sem o `ADMIN_*` não há como entrar; sem a chave do Gemini, tudo sobe menos a IA.
 
 **Parar e apagar o banco** de uma dessas stacks: o mesmo comando do `up`, trocando `up` por `down -v`.
 
@@ -311,6 +321,12 @@ docker exec agrosmart-prod-simulador-1 python /app/iot-simulator/iot_simulator.p
 | Variável | Padrão | Para quê |
 |---|---|---|
 | `GEMINI_API_KEY` | — | Chave da IA. Em dev, no `back/.env`; nos containers, um arquivo em `/run/secrets` |
+| `ADMIN_USUARIO` / `ADMIN_SENHA` | — | Primeiro usuário, criado na subida se não houver nenhum (segredo) |
+| `TELEMETRIA_TOKEN` | — | Token dos sensores/simulador no header `X-Dispositivo-Token` (segredo) |
+| `SESSAO_DIAS` | `7` | Validade da sessão de login |
+| `COOKIE_SEGURO` | `true` | Cookie só por HTTPS. `false` só nos testes |
+| `CORS_ORIGENS` | — | Origens extras aceitas (separadas por vírgula). Vazio: só a mesma origem |
+| `API_DOCS` | `false` | `true` liga `/docs` e `/openapi.json` (dev) |
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Modelo principal (há modelos de reserva se ele falhar) |
 | `DATABASE_URL` | `sqlite:///./agrosmart.db` | Banco. No container: `sqlite:////data/agrosmart.db` (volume) |
 | `SECRETS_DIR` | `/run/secrets` | Pasta de segredos *key-per-file*: o nome do arquivo é a variável e vale mais que o ambiente |
@@ -321,13 +337,35 @@ arquivo vale sem reiniciar a API. Os valores são **aproximados** e precisam de 
 
 ---
 
+## Autenticação
+
+- **Login** com usuário e senha (`POST /api/v1/auth/login`). A senha é guardada só como hash
+  **scrypt**; a sessão é um cookie `HttpOnly`, `Secure`, `SameSite=Strict`, válido por 7 dias, cujo
+  token é guardado no banco só como SHA-256 (sair encerra a sessão no servidor).
+- **Toda rota `/api/*` exige sessão**, menos o login. O `POST /api/v1/telemetria` aceita também o
+  header `X-Dispositivo-Token` com o `TELEMETRIA_TOKEN` (sensores/simulador) — esse token só envia
+  leituras, não lê nada.
+- Depois de 5 senhas erradas para o mesmo usuário em 15 min, o login dele fica bloqueado por 15 min.
+- **Usuários** são gerenciados pelo script `back/usuarios.py` (não há cadastro público):
+
+```bash
+docker exec -it agrosmart-prod-api-1 python usuarios.py criar maria --nome "Maria"
+```
+
+Comandos: `listar`, `criar <usuario>`, `senha <usuario>`, `desativar <usuario>`, `ativar <usuario>`
+(em dev, rode `python usuarios.py ...` de dentro de `back/`). Trocar a senha ou desativar derruba as
+sessões abertas. Todos os usuários veem a mesma propriedade (o MVP tem um produtor só).
+
+---
+
 ## API
 
-Com a API rodando, a referência completa e interativa está em **http://127.0.0.1:8000/docs**. Os grupos:
+Com `API_DOCS=true`, a referência completa e interativa está em **http://127.0.0.1:8000/docs**. Os grupos:
 
 | Grupo | Endpoints principais |
 |---|---|
-| Saúde | `GET /health` |
+| Saúde | `GET /health` (público) |
+| Autenticação | `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me` |
 | Sensores e alertas | `POST/GET /api/v1/telemetria`, `GET /api/v1/alertas`, `PUT /api/v1/alertas/{id}/resolver`, `POST /api/v1/alertas/resolver-todos`, `GET /api/v1/automacao/limites` |
 | Estoque | `GET/POST /api/v1/produtos`, `PUT/DELETE /api/v1/produtos/{id}`, `GET /api/v1/dashboard/comercial` |
 | Vendas | `POST/GET /api/v1/vendas`, `GET /api/v1/vendas/resumo` |
@@ -360,9 +398,8 @@ Com a API rodando, a referência completa e interativa está em **http://127.0.0
 3. Abra o PR para a `main`. O **CI** roda `testes-api` (pytest) e `testes-web` (lint + build); os
    dois precisam passar.
 4. No **merge na `main`**, o CI publica as imagens `sha-<7>` no GHCR e atualiza
-   `deploy/hml/compose.yml` — o Portainer sobe a **homologação**.
-5. Uma **tag `vX.Y.Z`** promove as mesmas imagens e abre um PR trocando `deploy/prod/compose.yml`; o
-   merge desse PR põe a versão em **produção**.
+   `deploy/prod/compose.yml` — o Portainer sobe a **produção** no `infra.home`. Não há homologação:
+   o merge é a aprovação.
 
 Detalhes, decisões e o passo a passo de infraestrutura: [`docs/cicd.md`](docs/cicd.md).
 

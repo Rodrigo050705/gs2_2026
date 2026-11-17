@@ -6,7 +6,8 @@
 #   docker build -t agrosmart-web:local front_teste/agrosmart-web
 #   docker compose -f deploy/prod/compose.yml -f deploy/local/compose.yml up
 #
-# Abre em http://localhost:8093. O segredo: um arquivo deploy/local/segredos/GEMINI_API_KEY.
+# Abre em http://localhost:8093. Segredos: um arquivo por chave em deploy/local/segredos
+# (GEMINI_API_KEY, ADMIN_USUARIO, ADMIN_SENHA, TELEMETRIA_TOKEN).
 
 services:
   api:
@@ -17,6 +18,8 @@ services:
 
   simulador:
     image: agrosmart-api:local
+    volumes:
+      - ../local/segredos:/run/secrets:ro
 
   web:
     image: agrosmart-web:local

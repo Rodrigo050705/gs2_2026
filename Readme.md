@@ -10,20 +10,32 @@ contribuir. O desenho do CI/CD e do deploy está em [`docs/cicd.md`](docs/cicd.m
 
 ## Sumário
 
-1. [Visão geral](#visão-geral)
-2. [Estrutura do repositório](#estrutura-do-repositório)
-3. [Pré-requisitos](#pré-requisitos)
-4. [Configuração inicial](#configuração-inicial)
-5. [Rodar em modo desenvolvimento](#rodar-em-modo-desenvolvimento)
-6. [Testes e qualidade](#testes-e-qualidade)
-7. [Rodar com Docker](#rodar-com-docker)
-8. [Demonstração: alertas da automação](#demonstração-alertas-da-automação)
-9. [Configuração (variáveis e segredos)](#configuração-variáveis-e-segredos)
-10. [Autenticação](#autenticação)
-11. [API](#api)
-12. [Problemas comuns](#problemas-comuns)
-13. [Fluxo de contribuição e CI/CD](#fluxo-de-contribuição-e-cicd)
-14. [Equipe](#equipe)
+1. [Vídeo pitch](#vídeo-pitch)
+2. [Visão geral](#visão-geral)
+3. [Estrutura do repositório](#estrutura-do-repositório)
+4. [Pré-requisitos](#pré-requisitos)
+5. [Configuração inicial](#configuração-inicial)
+6. [Rodar em modo desenvolvimento](#rodar-em-modo-desenvolvimento)
+7. [Testes e qualidade](#testes-e-qualidade)
+8. [Rodar com Docker](#rodar-com-docker)
+9. [Demonstração: alertas da automação](#demonstração-alertas-da-automação)
+10. [Configuração (variáveis e segredos)](#configuração-variáveis-e-segredos)
+11. [Autenticação](#autenticação)
+12. [API](#api)
+13. [Problemas comuns](#problemas-comuns)
+14. [Fluxo de contribuição e CI/CD](#fluxo-de-contribuição-e-cicd)
+15. [Uso de IA generativa](#uso-de-ia-generativa)
+16. [Equipe](#equipe)
+
+---
+
+## Vídeo pitch
+
+**Link:** _pendente: entra aqui assim que o vídeo for publicado._
+
+O pitch tem até 3 minutos e mostra o sistema funcionando: o problema do pequeno produtor, os
+sensores e os alertas da automação, o painel comercial, o assistente de IA, o pipeline de DevOps e
+os ODS 2, 10 e 13. O mesmo link vai no `.txt` da entrega da Global Solution.
 
 ---
 
@@ -408,6 +420,25 @@ novas em tabelas existentes** precisam entrar em `garantir_colunas_novas()` no `
 (somente mudanças aditivas).
 
 **Nunca commite** `back/.env`, `deploy/local/segredos/` nem `*.db` — já estão no `.gitignore`.
+
+---
+
+## Uso de IA generativa
+
+A Global Solution pede que o grupo declare as ferramentas de IA generativa usadas no projeto e para quê.
+
+| Ferramenta | Para quê |
+|---|---|
+| Claude Code (Anthropic) | Apoio na escrita e na revisão de código do back-end, do front-end, dos testes e do CI/CD, na explicação de erros, no script de gravação do vídeo pitch e na montagem da documentação em PDF. Aparece como coautor em parte dos commits. |
+| Google Gemini | Não é ferramenta de desenvolvimento: é parte do produto. É o modelo do assistente (chat) e do Resumo do dia. |
+
+**Como revisamos.** Desde o PR #1, toda mudança, feita com apoio de IA ou não, entra por pull request
+e só é integrada com os testes da API (pytest) e o lint e o build do front verdes no CI.
+
+**O que foi simulado.** No vídeo pitch e nos prints da documentação, a resposta do Gemini foi
+simulada, porque o ambiente de gravação não tinha chave da IA. A simulação usa os números reais do
+sistema e está declarada nos dois materiais. Com a chave em `back/.env`, o mesmo fluxo responde
+com o Gemini.
 
 ---
 
